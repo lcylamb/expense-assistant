@@ -6,7 +6,7 @@
 
 Ask a natural-language question about an expense report and get a **structured, verifiable answer**: a conclusion, the fields it is based on, and whether the data was insufficient. Answers stream over SSE.
 
-Open <http://localhost:3100> after `npm run start:dev`. The default provider is a mock, so no API key is required.
+**Live demo: <https://assistant-demo-0rgz.onrender.com>** — free-tier instance, the first request may take ~40s to wake up. Or run it locally: open <http://localhost:3100> after `npm run start:dev`; the default provider is a mock, so no API key is required.
 
 ## Features
 
