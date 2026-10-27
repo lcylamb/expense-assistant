@@ -6,7 +6,7 @@
 
 用自然语言提问一张报销单，返回**结构化、可校验**的回答：结论、依据字段，以及数据是否不足以回答。答案通过 SSE 逐块返回。
 
-`npm run start:dev` 之后打开 <http://localhost:3100>。默认使用 mock provider，不需要任何 API key。
+**在线演示：<https://assistant-demo-0rgz.onrender.com>**（免费实例，第一次访问需要等约 40 秒唤醒）。本地运行：`npm run start:dev` 之后打开 <http://localhost:3100>，默认使用 mock provider，不需要任何 API key。
 
 ## 特性
 
