@@ -39,9 +39,39 @@ npm run start:dev         # http://localhost:3100
 | `npm run db:reset` | 清库并重新 seed |
 | `npm run db:studio` | 数据浏览器（localhost:5555） |
 | `npm run probe:stream` | 请求流式端点，打印每块数据的到达时间 |
+| `npm run mcp` | 启动 MCP server（stdio），把只读工具暴露给任意 MCP 客户端 |
 | `npm run eval` / `eval:real` | 用 mock / 真实模型运行评测 |
 | `npm run lint` / `npm test` / `npm run test:e2e` | 静态检查与测试 |
 | `docker compose up --build` | 数据库 + 迁移 + 应用，整套运行在容器里 |
+
+## MCP server
+
+模型用的那批只读工具，同时以 MCP server（stdio 传输）对外提供 —— Claude Code、Cursor 等任何 MCP 客户端都能直接查这份数据：
+
+```
+expense-assistant (mcp/server.ts)
+  ├─ list_expenses        发现单子（可按状态过滤）
+  ├─ get_expense_summary  按单号查表头
+  ├─ list_expense_items   按单号查明细 + 合计
+  └─ get_approval_record  按单号查状态 / 决策时间 / 驳回原因
+```
+
+在 MCP 客户端配置里注册（把绝对路径换成你的）：
+
+```json
+{
+  "mcpServers": {
+    "expense-assistant": {
+      "command": "/path/to/expense-assistant/node_modules/.bin/tsx",
+      "args": ["/path/to/expense-assistant/mcp/server.ts"]
+    }
+  }
+}
+```
+
+依赖与应用相同：`.env` 里的 `DATABASE_URL`、Postgres 已起且已 seed。server 从仓库根目录读 `.env`，与客户端拉起子进程时的工作目录无关；数据库连不上会在启动时直接失败，不带病启动。
+
+关于安全边界：Web 版把单号绑在服务端，模型不能选查哪张单；MCP 的调用者是操作者本人（本机进程、本机库），等同直接读库的权限，所以这里的工具接受 `code` 参数、也提供了发现单号的工具。不变的两条：全部只读，没有自由 SQL 的口子。
 
 ## 用法
 

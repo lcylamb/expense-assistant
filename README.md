@@ -40,9 +40,39 @@ Useful scripts:
 | `npm run db:reset` | Reset the database and re-seed |
 | `npm run db:studio` | Database browser (localhost:5555) |
 | `npm run probe:stream` | Call the streaming endpoint and print arrival time per chunk |
+| `npm run mcp` | Start the MCP server (stdio) exposing the read-only tools |
 | `npm run eval` / `eval:real` | Run the evaluation suite with mock / a real model |
 | `npm run lint` / `npm test` / `npm run test:e2e` | Static checks and tests |
 | `docker compose up --build` | Database + migrations + app in containers |
+
+## MCP server
+
+The same read-only tools the model uses are also exposed as an MCP server (stdio transport), so any MCP client — Claude Code, Cursor, etc. — can query the expense data directly:
+
+```
+expense-assistant (mcp/server.ts)
+  ├─ list_expenses        discover reports (optionally filter by status)
+  ├─ get_expense_summary  header of one report, by code
+  ├─ list_expense_items   line items + total, by code
+  └─ get_approval_record  status / decidedAt / rejectReason, by code
+```
+
+Register it in your MCP client config (adjust the absolute paths):
+
+```json
+{
+  "mcpServers": {
+    "expense-assistant": {
+      "command": "/path/to/expense-assistant/node_modules/.bin/tsx",
+      "args": ["/path/to/expense-assistant/mcp/server.ts"]
+    }
+  }
+}
+```
+
+Requires the same setup as the app (`.env` with `DATABASE_URL`, Postgres running and seeded). The server reads `.env` from the repo root regardless of the client's working directory, and fails fast at startup if the database is unreachable.
+
+Note on the security boundary: the web app binds the expense ID server-side so the model cannot choose which report to read. The MCP caller is the operator on their own machine — an equivalent of direct read access — which is why the tools accept a `code` parameter and a discovery tool exists here. What does not change: every tool is read-only, and there is no free-form SQL surface.
 
 ## Usage
 
