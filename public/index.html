@@ -392,7 +392,7 @@
       <div class="logo">报</div>
       <div>
         <h1>报销单问答</h1>
-        <p class="sub">流式输出演示</p>
+        <p class="sub">报销数据 · 只读问答演示</p>
       </div>
     </div>
 
@@ -422,6 +422,7 @@
     <p>先在上面选单号，或者直接点下面的例子</p>
     <div class="chips" id="chips"></div>
     <p class="footnote">
+      这是一个报销数据问答的演示，不是报销管理系统：没有提交、审批、打款流程，你以「可查库内报销单的员工」身份提问，全部只读。<br>
       答案是一个字一个字出现的：那是模型的原始输出，结束时才被最终校验过的版本覆盖 ——<br>
       所以最后那一下「跳」，是两个版本在交接，不是显示错乱。
     </p>
@@ -476,13 +477,27 @@ const EXPENSES = [
   { code: 'BX-2026-0010', title: '招聘平台年度续费', status: 'draft', label: '草稿' },
 ];
 
-const PRESETS = [
-  { code: 'BX-2026-0003', question: '这张单子为什么被驳回了？', label: '被驳回的单子' },
-  { code: 'BX-2026-0005', question: '审批意见是什么？', label: '草稿单问审批' },
-  { code: 'BX-2026-0006', question: '这笔钱都花在哪些项目上？', label: '问费用明细' },
-  { code: 'BX-2026-0001', question: '一共多少钱？', label: '问金额' },
-  { code: 'BX-9999-9999', question: '这张单子多少钱？', label: '不存在的单号（404）' },
-];
+/**
+ * 空状态里的例子 chips —— 跟着当前单号的状态走，不是一套固定文案。
+ *
+ * 面试反馈：例子只在默认单号出现、换单号就消失。根因是 chips 在初始化时
+ * 渲染了一次就不再变。现在换单号就重渲染：驳回的单子第一颗是「为什么被驳回」，
+ * 草稿/待审批/已通过问审批意见，404 演示固定放最后。
+ */
+function chipPresets(code) {
+  const item = EXPENSES.find((e) => e.code === code);
+  if (!item) {
+    return [{ question: '这张单子多少钱？', label: '问这张不存在的单子' }];
+  }
+  return [
+    item.status === 'rejected'
+      ? { question: '这张单子为什么被驳回了？', label: '为什么被驳回' }
+      : { question: '审批意见是什么？', label: '问审批意见' },
+    { question: '这笔钱都花在哪些项目上？', label: '问费用明细' },
+    { question: '一共多少钱？', label: '问金额' },
+    { question: '这张单子多少钱？', label: '不存在的单号（404）', code: 'BX-9999-9999' },
+  ];
+}
 
 const STATUS_TEXT = {
   streaming: '生成中…',
@@ -546,16 +561,36 @@ for (const item of EXPENSES) {
   $('codeList').appendChild(row);
 }
 
-for (const preset of PRESETS) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.textContent = preset.label;
-  button.addEventListener('click', () => {
-    setCode(preset.code);
-    questionInput.value = preset.question;
-    ask();
-  });
-  $('chips').appendChild(button);
+/**
+ * 空状态（标题、说明、例子 chips）跟着当前单号重渲染。
+ * 切了单号也能回到这里 —— 例子恰恰在人不知道问什么的时候最有用。
+ */
+function renderEmpty() {
+  const item = EXPENSES.find((e) => e.code === currentCode);
+  const h2 = empty.querySelector('h2');
+  const p = empty.querySelector('p');
+
+  if (!item) {
+    h2.textContent = '这张单号在库里不存在';
+    p.textContent = '正好用它演示 404：随便问一句，看后端怎么应对';
+  } else {
+    h2.textContent = `问点「${item.title}」的事`;
+    p.textContent = `当前 ${item.code} · ${item.label} —— 换单号，下面的例子会跟着换`;
+  }
+
+  const chips = $('chips');
+  chips.replaceChildren();
+  for (const preset of chipPresets(currentCode)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = preset.label;
+    button.addEventListener('click', () => {
+      if (preset.code) setCode(preset.code);
+      questionInput.value = preset.question;
+      ask();
+    });
+    chips.appendChild(button);
+  }
 }
 
 setCode(currentCode);
@@ -564,13 +599,22 @@ function setCode(code) {
   // 换单子就换话题：历史是「这张单子」的上下文，带过去会诱导模型把上一张的
   // 结论当成这一张的依据。服务端虽然会按本次单号重新查数据，但结论里的
   // 具体数字来自历史，那是最难被发现的一种串台。
-  if (code !== currentCode) history = [];
+  if (code !== currentCode) {
+    history = [];
+    // 屏幕上的旧问答跟着清掉：历史已经重置，留着它们会让人以为模型还记得上一张单。
+    // 只删 .turn（消息本身）—— #empty 是 #chat 的子元素，整个 replaceChildren 会把它也删掉。
+    for (const turn of [...chat.querySelectorAll('.turn')]) turn.remove();
+  }
 
   currentCode = code;
   $('codeValue').textContent = code;
   for (const row of $('codeList').children) {
     row.setAttribute('aria-selected', String(row.dataset.code === code));
   }
+
+  // 空状态和例子 chips 恢复显示 —— 之前切了单号就再也回不来了。
+  empty.hidden = false;
+  renderEmpty();
 }
 
 function openMenu(open) {
