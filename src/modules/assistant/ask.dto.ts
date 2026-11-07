@@ -48,6 +48,13 @@ export class AskDto {
   @ValidateNested({ each: true })
   @Type(() => HistoryTurnDto)
   history?: HistoryTurnDto[];
+
+  // ⚠️ 这里**曾经**有一个 `viewer` 字段，现在没有了，而且不该加回来。
+  //
+  // 身份来自登录态（cookie 里的会话令牌 → SessionGuard → req.viewer），
+  // controller 从请求上取，跟 body 无关。DTO 里留一个 `viewer` 字段，
+  // 等于给「客户端自称是谁」留了一个后门 —— 校验写得再漂亮，
+  // 它也是**入参**，而权限不能是入参。
 }
 
 /**

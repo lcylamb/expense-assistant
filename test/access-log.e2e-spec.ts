@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module.js';
 import { applyGlobalSetup } from '../src/app-setup.js';
+import { loginCookieAt } from './support/session.js';
 
 /**
  * 访问日志 (e2e)。
@@ -19,6 +20,7 @@ import { applyGlobalSetup } from '../src/app-setup.js';
 describe('访问日志 (e2e)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
+  let cookie: string;
   const lines: string[] = [];
 
   interface LogRecord {
@@ -43,6 +45,7 @@ describe('访问日志 (e2e)', () => {
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    cookie = await loginCookieAt(baseUrl);
 
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
       lines.push(String(chunk));
@@ -93,7 +96,7 @@ describe('访问日志 (e2e)', () => {
   }
 
   it('业务接口记一条、健康的探活不记，且带请求 id', async () => {
-    const metrics = await fetch(`${baseUrl}/assistant/metrics`);
+    const metrics = await fetch(`${baseUrl}/assistant/metrics`, { headers: { cookie } });
     const requestId = metrics.headers.get('x-request-id');
     await metrics.text();
     await fetch(`${baseUrl}/health`);
@@ -135,7 +138,7 @@ describe('访问日志 (e2e)', () => {
   it('流式请求标出「流式」，且只记一条', async () => {
     const response = await fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         code: 'BX-2026-0003',
         question: '这张单子为什么被驳回了？',
@@ -162,7 +165,7 @@ describe('访问日志 (e2e)', () => {
   it('业务日志带上同一个 reqId —— 这才是请求上下文的意义', async () => {
     const response = await fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         code: 'BX-2026-0003',
         question: '这张单子为什么被驳回了？',
@@ -185,7 +188,7 @@ describe('访问日志 (e2e)', () => {
     const controller = new AbortController();
     const response = await fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         code: 'BX-2026-0003',
         question: '这张单子为什么被驳回了？',

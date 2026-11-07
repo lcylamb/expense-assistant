@@ -14,6 +14,7 @@ import {
   type LlmStream,
   type LlmStreamEvent,
 } from '../src/modules/llm/llm.types.js';
+import { loginCookieAt } from './support/session.js';
 
 /**
  * 优雅退出的边界：活跃的 SSE 流不能把关闭拖住。
@@ -92,6 +93,7 @@ const CLIENT_SETTLE_MS = 1000;
 describe('优雅退出 (e2e)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
+  let cookie: string;
   let closed = false;
 
   // 关掉日志输出并顺手留下证据：销毁钩子到底跑没跑。
@@ -114,6 +116,7 @@ describe('优雅退出 (e2e)', () => {
 
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    cookie = await loginCookieAt(baseUrl);
 
     logSpy = vi
       .spyOn(Logger.prototype, 'log')
@@ -131,7 +134,7 @@ describe('优雅退出 (e2e)', () => {
   it('流还在写的时候，close() 不等它跑完', async () => {
     const response = await fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify(body),
     });
     expect(response.status).toBe(200);

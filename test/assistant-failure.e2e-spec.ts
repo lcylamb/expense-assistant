@@ -13,6 +13,7 @@ import {
   type LlmStreamEvent,
 } from '../src/modules/llm/llm.types.js';
 import { parseSse } from './support/sse.js';
+import { loginCookie } from './support/session.js';
 
 /**
  * 模型侧出故障时，用户到底看到什么。
@@ -71,24 +72,25 @@ async function* once(event: LlmStreamEvent): AsyncGenerator<LlmStreamEvent> {
 
 describe('模型调用失败时用户看到什么 (e2e)', () => {
   let app: NestExpressApplication;
+  let cookie: string;
   let stub: StubProvider;
   const warns: string[] = [];
 
   const ask = () =>
-    request(app.getHttpServer()).post('/assistant/ask').send({
+    request(app.getHttpServer()).post('/assistant/ask').set('Cookie', cookie).send({
       code: 'BX-2026-0003',
       question: '这张单子为什么被驳回了？',
     });
 
   const askStream = () =>
-    request(app.getHttpServer()).post('/assistant/askStream').send({
+    request(app.getHttpServer()).post('/assistant/askStream').set('Cookie', cookie).send({
       code: 'BX-2026-0003',
       question: '这张单子为什么被驳回了？',
     });
 
   const metrics = async (): Promise<MetricsSnapshot> => {
     const response = await request(app.getHttpServer())
-      .get('/assistant/metrics')
+      .get('/assistant/metrics').set('Cookie', cookie)
       .expect(200);
     return response.body as MetricsSnapshot;
   };
@@ -108,6 +110,7 @@ describe('模型调用失败时用户看到什么 (e2e)', () => {
     app = moduleFixture.createNestApplication<NestExpressApplication>();
     applyGlobalSetup(app);
     await app.init();
+    cookie = await loginCookie(app);
 
     const original = Logger.prototype.warn.bind(Logger.prototype);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(

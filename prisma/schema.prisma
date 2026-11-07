@@ -6,8 +6,11 @@
 //   2. 状态和分类用 enum 而不是自由字符串 —— 图形上它把模型的回答空间收窄了：
 //      prompt 里可以把枚举值全部列出来，模型只能在合法值里选，结构化输出的校验才立得住。
 //   3. 可空字段是「有信息量」的那种空，不是随手标的 —— rejectReason 只在 REJECTED 时有值，
-//      decidedAt 只在已决策时有值。这给了「信息不足」一个自然的来源：
+//      decidedAt / approverName / approvalNote 只在已决策时有值。这给了「信息不足」一个自然的来源：
 //      问一张还没决策的单子「审批意见是什么」，正确答案就是「数据里没有」，而不是编一个。
+//   4. 审批意见和驳回原因分开存 —— 它们不是同一句话的两种叫法：驳回原因写给申请人看，
+//      是「改完重提」的要求；审批意见是流程留痕，通过和打款也要有。合成一个字段，
+//      通过的单就只能留空，前端那个「问审批意见」的入口就答不出来。
 
 generator client {
   // ⚠️ Prisma 7 把 generator 从 `prisma-client-js` 改名为 `prisma-client`，
@@ -45,6 +48,44 @@ enum ExpenseCategory {
   OTHER // 其他
 }
 
+/// 账号角色。取值和 viewer.ts 的 ViewerRole 一一对应（那边是小写）。
+enum UserRole {
+  APPLICANT // 申请人：只能看自己的单
+  APPROVER // 审批人：看全部已提交的单，草稿不可见
+  AUDITOR // 审计：只读全部（含草稿），用来复核和对账
+}
+
+/// 一个能登录的账号。
+///
+/// ── 为什么要有这张表 ──
+///
+/// 权限的第一块砖不是「可见性规则」，是「你是谁」。之前身份由请求方自己声明
+/// （body 里写 `viewer.name`），可见性规则再严密也只是在验证一句自称。
+/// 有了账号表，身份才有唯一的出处：登录换来会话，会话里带 user id，
+/// 服务端按 id 去查这个人是谁、能看什么。
+///
+/// passwordHash 只存 scrypt 派生值（格式见 src/modules/auth/password.ts），
+/// 明文密码不进库、不进日志、不进 seed 的注释。
+model User {
+  id String @id @default(cuid())
+
+  /// 登录名。用拼音而不是姓名：姓名会重、会改，登录名不会。
+  username String @unique
+
+  /// 显示名。与 Expense.applicant 快照对齐，页面上直接用。
+  name       String
+  role       UserRole
+  department String
+
+  passwordHash String
+
+  createdAt DateTime @default(now())
+
+  expenses Expense[]
+
+  @@map("users")
+}
+
 /// 一张报销单。
 model Expense {
   id String @id @default(cuid())
@@ -54,9 +95,15 @@ model Expense {
 
   title String
 
-  /// 提交人。演示数据里一律用「张三」这类占位姓名，不含任何真实人员信息。
+  /// 提交人**姓名快照**，只用于展示和 prompt（改名不影响历史单据的写法）。
+  /// 权限判定不认它 —— 认下面的 applicantId。同名同姓在真实公司里一定会发生，
+  /// 用姓名当归属键，等于让重名的人互相看得见对方的单。
   applicant  String
   department String
+
+  /// 归属人。可见性规则唯一认可的键（见 viewer.ts）。
+  applicantId String
+  applicantUser User @relation(fields: [applicantId], references: [id], onDelete: Restrict)
 
   category ExpenseCategory
 
@@ -68,6 +115,13 @@ model Expense {
   /// 仅 REJECTED 时有值。见文件头第 3 条。
   rejectReason String?
 
+  /// 决策人姓名快照。已决策（通过 / 驳回 / 打款）的单才有值，草稿和待审批为 null。
+  /// 存快照而不是外键：真实审批人可能离职、换岗，历史单据上的签字不能跟着变。
+  approverName String?
+
+  /// 审批意见。通过和打款写这里；驳回的整改要求在 rejectReason 里。见文件头第 4 条。
+  approvalNote String?
+
   submittedAt DateTime
   /// 决策时间（通过 / 驳回 / 打款）。草稿和待审批时为 null。
   decidedAt   DateTime?
@@ -77,6 +131,8 @@ model Expense {
   /// 按「最近提交的排前面」查列表是最常见的入口，索引直接建在它上面。
   @@index([submittedAt(sort: Desc)])
   @@index([status])
+  /// 申请人视角的列表查询每次都带 `applicantId`，索引跟着这条路径建。
+  @@index([applicantId])
   @@map("expenses")
 }
 

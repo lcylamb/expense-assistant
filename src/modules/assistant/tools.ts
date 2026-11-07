@@ -1,11 +1,14 @@
 import type { LlmToolSpec } from '../llm/llm.types.js';
 import type { PrismaService } from '../../prisma/prisma.service.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 import {
   buildApprovalRecord,
   buildExpenseHeader,
   buildExpenseItems,
   fieldsOf,
 } from './expense-context.js';
+import { visibilityWhere } from './viewer.js';
+import type { Viewer } from './viewer.js';
 
 /**
  * 模型能用的只读工具。
@@ -36,6 +39,22 @@ export interface ToolRunContext {
   /** 本次请求绑定的单子。模型无法改变它。 */
   expenseId: string;
   prisma: PrismaService;
+  /**
+   * 请求方身份（可选）。给了它，每个工具的查询都会把可见性条件**拼进 where** ——
+   * 就算上游绑定逻辑被改坏、查到了别人的单子，工具这一层也吐不出数据。
+   * 这是纵深防御的第二层；第一层在 service.prepare()（404 拒绝整次请求）。
+   * MCP 路径不传它：调用者是操作者本人，等同直接读库（见 README「MCP server」）。
+   */
+  viewer?: Viewer;
+}
+
+/** 把可见性条件合进按 id 的查询。三处工具共用，规则只此一份。 */
+function scopedWhere(
+  expenseId: string,
+  viewer?: Viewer,
+): Prisma.ExpenseWhereUniqueInput {
+  const filter = visibilityWhere(viewer);
+  return { id: expenseId, ...(filter ? { AND: [filter] } : {}) };
 }
 
 export interface ToolOutcome {
@@ -66,9 +85,9 @@ const getExpenseSummary: AgentTool = {
       '不包含费用明细和审批意见。',
     parameters: NO_ARGS,
   },
-  async run({ expenseId, prisma }) {
+  async run({ expenseId, prisma, viewer }) {
     const expense = await prisma.expense.findUnique({
-      where: { id: expenseId },
+      where: scopedWhere(expenseId, viewer),
       select: {
         code: true,
         title: true,
@@ -80,7 +99,7 @@ const getExpenseSummary: AgentTool = {
         submittedAt: true,
       },
     });
-    if (!expense) return missing('这张报销单已经不存在了');
+    if (!expense) return missing('这张报销单不存在，或当前身份无权查看');
 
     return ok(buildExpenseHeader(expense));
   },
@@ -94,9 +113,9 @@ const listExpenseItems: AgentTool = {
       '以及合计金额。费用发生日与提交日期是两回事。',
     parameters: NO_ARGS,
   },
-  async run({ expenseId, prisma }) {
+  async run({ expenseId, prisma, viewer }) {
     const expense = await prisma.expense.findUnique({
-      where: { id: expenseId },
+      where: scopedWhere(expenseId, viewer),
       // 只选工具需要的列。真实系统里这一步还该带权限过滤，
       // 现在没有多租户，但「工具自己查、自己限定列」这个形状先立住。
       select: {
@@ -117,7 +136,7 @@ const listExpenseItems: AgentTool = {
         },
       },
     });
-    if (!expense) return missing('这张报销单已经不存在了');
+    if (!expense) return missing('这张报销单不存在，或当前身份无权查看');
 
     return ok(buildExpenseItems(expense));
   },
@@ -127,21 +146,25 @@ const getApprovalRecord: AgentTool = {
   spec: {
     name: 'get_approval_record',
     description:
-      '查这张报销单的审批记录：当前状态、决策时间（decidedAt）、驳回原因（rejectReason）。' +
-      '草稿或待审批的单子没有决策信息，此时这两个字段不会出现 —— 这表示数据不足，不是出错。',
+      '查这张报销单的审批记录：当前状态、决策时间（decidedAt）、审批人（approverName）、' +
+      '审批意见（approvalNote）、驳回原因（rejectReason）。' +
+      '通过与打款的单意见在 approvalNote，驳回的单整改要求在 rejectReason。' +
+      '草稿或待审批的单子没有决策信息，这些字段都不会出现 —— 这表示数据不足，不是出错。',
     parameters: NO_ARGS,
   },
-  async run({ expenseId, prisma }) {
+  async run({ expenseId, prisma, viewer }) {
     const expense = await prisma.expense.findUnique({
-      where: { id: expenseId },
+      where: scopedWhere(expenseId, viewer),
       select: {
         code: true,
         status: true,
         decidedAt: true,
+        approverName: true,
+        approvalNote: true,
         rejectReason: true,
       },
     });
-    if (!expense) return missing('这张报销单已经不存在了');
+    if (!expense) return missing('这张报销单不存在，或当前身份无权查看');
 
     // 复用整页 context 的构造规则：可空字段只在有值时出现。
     // 这样「数据里没有」和「模型编了一个」在字段层面始终分得开。

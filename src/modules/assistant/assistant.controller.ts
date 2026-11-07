@@ -5,18 +5,26 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { CurrentViewer } from '../auth/authenticated.decorator.js';
 import { AssistantMetricsService } from './assistant-metrics.service.js';
 import type { MetricsSnapshot } from './assistant-metrics.service.js';
 import { AssistantService } from './assistant.service.js';
 import { AskDto } from './ask.dto.js';
-import type { AskResult, AssistantStreamEvent } from './ask.types.js';
+import { ListExpensesDto } from './list-expenses.dto.js';
+import type {
+  AskResult,
+  AssistantStreamEvent,
+  ExpenseListResult,
+} from './ask.types.js';
 import { ModelConcurrencyGuard } from './model-concurrency.guard.js';
+import type { Viewer } from './viewer.js';
 
 @Controller('assistant')
 export class AssistantController {
@@ -44,6 +52,24 @@ export class AssistantController {
   }
 
   /**
+   * 单据列表 + 概览统计。
+   *
+   * `@SkipThrottle()` 同 metrics：不碰模型、不花钱；而且它就在概览页首屏，
+   * 用户每开一次页面都会调 —— 限流要是管着它，看一眼首页就把提问的额度吃了。
+   *
+   * 身份来自 `@CurrentViewer()`（登录守卫挂上去的），不来自查询串。
+   * 早先这里是 `?name=张三&role=applicant` —— 换个参数就是另一个人。
+   */
+  @SkipThrottle()
+  @Get('expenses')
+  listExpenses(
+    @Query() query: ListExpensesDto,
+    @CurrentViewer() viewer: Viewer,
+  ): Promise<ExpenseListResult> {
+    return this.assistant.listExpenses(query, viewer);
+  }
+
+  /**
    * POST 而不是 GET：问题在 body 里。中文进 URL 会被各级日志和代理原样记下来，
    * 而「用户问了什么」不该躺在访问日志里。
    *
@@ -55,6 +81,7 @@ export class AssistantController {
   @UseGuards(ModelConcurrencyGuard)
   async ask(
     @Body() dto: AskDto,
+    @CurrentViewer() viewer: Viewer,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AskResult | undefined> {
     // 非流式也要能停：客户端断开后，在途的模型调用继续跑到预算到点，只是白烧 token。
@@ -64,7 +91,7 @@ export class AssistantController {
       if (!res.writableEnded) abort.abort();
     });
 
-    const result = await this.assistant.ask(dto, abort.signal);
+    const result = await this.assistant.ask(dto, viewer, abort.signal);
     // null = 客户端已经走了。返回 undefined，别往一个死连接上再写东西。
     return result ?? undefined;
   }
@@ -87,6 +114,7 @@ export class AssistantController {
   @UseGuards(ModelConcurrencyGuard)
   async askStream(
     @Body() dto: AskDto,
+    @CurrentViewer() viewer: Viewer,
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
@@ -106,7 +134,7 @@ export class AssistantController {
     // ⚠️ 取数必须在写响应头**之前**完成：它可能抛 404，
     // 而头一旦发出去，就再也没法返回一个正常的 JSON 错误了 ——
     // 只能把错误塞进流里，但那对调用方是完全不同的语义。
-    const prepared = await this.assistant.prepare(dto);
+    const prepared = await this.assistant.prepare(dto, viewer);
 
     // 取数期间用户就走了：不写头、不开模型，直接收场。
     // `res.destroyed` 兜的是「`close` 在监听器挂上之前就触发过」的那种时序 ——
@@ -137,7 +165,7 @@ export class AssistantController {
     // `SSE_HEARTBEAT_MS` 之后才发，正常出字的时候一个字都不多写。
     //
     // ⚠️ 发注释帧意味着**每一个读流的地方**都必须跳过没有 `data:` 的帧。
-    // 现在有四处：本文件、`test/support/sse.ts`、`public/index.html`、
+    // 现在有四处：本文件、`test/support/sse.ts`、`web/src/api/client.ts`（前端）、
     // `scripts/ask-stream-probe.mjs` —— 少改一处，那一处就会在第一次空闲后炸。
     const heartbeatMs = heartbeatIntervalMs();
     let lastWriteAt = Date.now();

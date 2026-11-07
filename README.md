@@ -6,17 +6,19 @@
 
 Ask a natural-language question about an expense report and get a **structured, verifiable answer**: a conclusion, the fields it is based on, and whether the data was insufficient. Answers stream over SSE.
 
-**Live demo: <https://assistant-demo-0rgz.onrender.com>** — free-tier instance, the first request may take ~40s to wake up. Or run it locally: open <http://localhost:3100> after `npm run start:dev`; the default provider is a mock, so no API key is required.
+**Live demo: <https://assistant-demo-0rgz.onrender.com>** — free-tier instance, the first request may take ~40s to wake up. Or run it locally: `npm run dev`, then open <http://localhost:5173>; the default provider is a mock, so no API key is required.
 
 ## Features
 
 - **Structured output** — the model must return JSON; the complete answer is validated field by field, and malformed output results in `502` instead of a partial answer.
 - **Verifiable evidence** — `evidence` only accepts fields returned by tools actually called during this request; unknown fields are removed and logged.
 - **Tool calling** — the model fetches data through three read-only tools. The expense ID is bound by the server and cannot be chosen by the model.
+- **Login, then visibility** — real username/password login (scrypt hashes, signed session cookie); the server decides which expenses you can see. Querying one you cannot see returns the same `404` as a nonexistent code, so codes cannot be enumerated. Rules live in one place (`viewer.ts`) and are shared by the list endpoint, the ask guard, and the tool queries.
 - **Streaming** — the conclusion is extracted incrementally from partial JSON; streaming and non-streaming responses share the same final validation. True token-by-token streaming with a real provider; the mock simulates chunks.
 - **Multi-turn** — the client sends back the previous turn's validated conclusion; the server keeps no session state.
 - **Policy Q&A (RAG)** — a second module answers questions about the (fictional) expense policy handbook: document splitting, local embeddings, retrieval, and a LangGraph quality gate that rewrites the query and retries when retrieval comes back irrelevant.
-- **Evaluated** — 23 cases cover tool trajectories, prompt injection, and cross-record access, run against a real database in CI.
+- **Evaluated** — 24 cases cover tool trajectories, prompt injection, and cross-record access, run against a real database in CI.
+- **A real front end, not a demo page** — React 18 + TypeScript + Ant Design 5, routed with react-router, built with Vite into `public/` and served by the same Nest process (same origin, no CORS). Identity and data live in separate contexts; the UI is componentized and covered by Testing Library tests. Source lives in `web/`, build artifacts are not committed.
 - **Observable** — request IDs, access logs, latency / time-to-first-token / token / cost metrics, and rejected-request counters.
 - **Mock-first** — a rule-based provider makes the full test suite reproducible without network access or credentials.
 
@@ -30,8 +32,12 @@ npm install
 npm run db:up             # start PostgreSQL
 npm run db:migrate        # create tables
 npm run db:seed           # insert 10 fictional expense reports
-npm run start:dev         # http://localhost:3100
+npm run dev               # API :3100 + web :5173 (hot reload — open 5173)
 ```
+
+`npm run dev` starts two processes: Nest in `--watch` mode on 3100 (backend edits restart it), and Vite on 5173 (frontend edits hot-swap without a page reload). **Open 5173 while developing.** 3100 is the API; the page it also serves is whatever the last `npm run build` left in `public/`, so `/` redirects to 5173 instead of showing a stale build.
+
+Only three kinds of change need a manual restart: `.env`, `prisma/schema.prisma`, and new dependencies.
 
 Useful scripts:
 
@@ -43,7 +49,34 @@ Useful scripts:
 | `npm run mcp` | Start the MCP server (stdio) exposing the read-only tools |
 | `npm run eval` / `eval:real` | Run the evaluation suite with mock / a real model |
 | `npm run lint` / `npm test` / `npm run test:e2e` | Static checks and tests |
+| `npm run dev:web` | Vite dev server for the front end (proxies `/auth`, `/assistant` to :3100) |
+| `npm run test:web` | Front-end component tests (Testing Library, jsdom) |
 | `docker compose up --build` | Database + migrations + app in containers |
+
+## Accounts and visibility
+
+The web UI is a real login form. Passwords are stored as scrypt hashes with a per-user salt; a successful login returns a signed JWT in an **httpOnly** cookie (8h TTL, `SameSite=Lax`). The token carries only the user id — the name and role are read from the database on every request, so a role change takes effect immediately instead of waiting out the token.
+
+Seeded accounts (password `demo1234` for all of them — public on purpose, they are demo data):
+
+| Username | Name | Role | Sees |
+|---|---|---|---|
+| `zhangsan` / `lisi` / `wangwu` / `zhaoliu` / `sunqi` | 张三 / 李四 / 王五 / 赵六 / 孙七 | `applicant` | Only their own reports |
+| `wangjl` | 王经理 | `approver` | Everything except `DRAFT` |
+| `zhengshi` | 郑十 | `auditor` | Everything, including drafts (read-only reconciliation) |
+
+Visibility is enforced in three places from one implementation (`viewer.ts`): the list endpoint filters the collection, `prepare()` rejects invisible codes before a session starts, and every tool query carries the same condition in its `where` — so even a bug in the binding layer cannot leak rows. Ownership is checked against `applicantId`, not the applicant's name: two people named 张三 exist in real companies.
+
+Asking for someone else's report returns exactly the same `404` as asking for a code that does not exist. The API never confirms that another person's report exists.
+
+What is deliberately **not** here, rather than hidden:
+
+- **Identity is never an input.** The request body has no `viewer` field; posting one is rejected with `400`. The old client-declared identity is gone — one `curl` used to be enough to act as an approver.
+- **No revocation list.** Sessions are stateless, so logout clears the cookie but a copied token stays valid until it expires. That is the price of not maintaining a session table, and the reason the token is httpOnly (page scripts cannot copy it).
+- **Login shares the per-IP throttle** with the ask endpoints. Three wrong passwords in a minute will also block questions for that minute.
+- **No password reset / user management.** Accounts come from the seed.
+
+Set `SESSION_SECRET` (≥32 chars) in production. Without it the app still boots, but generates a random key per process — every restart invalidates all sessions, and multiple instances will not recognise each other's tokens. `COOKIE_SECURE` overrides the `Secure` flag when TLS terminates in front of the app.
 
 ## MCP server
 
@@ -54,7 +87,7 @@ expense-assistant (mcp/server.ts)
   ├─ list_expenses        discover reports (optionally filter by status)
   ├─ get_expense_summary  header of one report, by code
   ├─ list_expense_items   line items + total, by code
-  └─ get_approval_record  status / decidedAt / rejectReason, by code
+  └─ get_approval_record  status / decidedAt / approverName / approvalNote / rejectReason, by code
 ```
 
 Register it in your MCP client config (adjust the absolute paths):
@@ -79,7 +112,13 @@ Note on the security boundary: the web app binds the expense ID server-side so t
 ### Single question
 
 ```bash
-curl -X POST localhost:3100/assistant/ask \
+# 1. Log in once; the cookie jar keeps the session for the next call.
+curl -c /tmp/ea.jar -X POST localhost:3100/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"zhengshi","password":"demo1234"}'
+
+# 2. Ask. No identity in the body — the server reads it from the session.
+curl -b /tmp/ea.jar -X POST localhost:3100/assistant/ask \
   -H 'Content-Type: application/json' \
   -d '{"code":"BX-2026-0003","question":"Why was this report rejected?"}'
 ```
@@ -156,17 +195,21 @@ At most 3 turns. History is context only; it does not expand which fields may be
 
 | Method | Path | Description |
 |---|---|---|
+| `POST` | `/auth/login` | `{username, password}` → session cookie + profile (public) |
+| `POST` | `/auth/logout` | Clears the session cookie (public) |
+| `GET` | `/auth/me` | Current profile, or `401` |
 | `POST` | `/assistant/ask` | Returns an `AskResult` |
 | `POST` | `/assistant/askStream` | SSE: `delta` → `done`, or `error` |
+| `GET` | `/assistant/expenses[?category=TRAVEL]` | Expenses visible to the logged-in account + summary |
 | `GET` | `/assistant/metrics` | In-process metrics snapshot |
 | `GET` | `/health` | Runs `select 1`; returns `503` when the database is unavailable |
 
-Every response carries `X-Request-Id`; logs are JSON lines that carry the same value as `reqId`.
+Every endpoint except `/auth/login`, `/auth/logout` and `/health` requires a session cookie (`401` otherwise). Every response carries `X-Request-Id`; logs are JSON lines that carry the same value as `reqId`.
 
 | Status | Meaning |
 |---|---|
 | `400` | Request validation failed |
-| `404` | Expense report not found |
+| `404` | Expense report not found — also returned when the identity has no visibility over it, so codes cannot be enumerated |
 | `429` | Rate limit, concurrency limit, or daily quota exceeded |
 | `502` | Model call failed, or output failed format validation |
 | `503` | Database unavailable |
@@ -214,16 +257,16 @@ the embedding model puts the process at ~714MB RSS, so small-memory hosts
 
 ## Evaluation
 
-23 cases, each sent to both endpoints. Most expected values are computed from the database rather than hard-coded.
+24 cases, each sent to both endpoints. Most expected values are computed from the database rather than hard-coded.
 
 ```
-npm run eval        (mock)      : 13 passed, 10 known gaps, 0 unexpected
+npm run eval        (mock)      : 14 passed,  9 known gaps, 0 unexpected
 npm run eval:real   (DeepSeek)  : 23 passed,  0 known gaps, 0 unexpected
 ```
 
 - Structural checks are never waived: cited fields must exist, amounts and dates must be traceable, tools must not fail, and both endpoints must return the same conclusion under a deterministic provider.
 - Trajectory checks require each case to call a designated tool, so a coincidentally correct answer does not pass.
-- The 10 known gaps on mock correspond to capabilities the rule table lacks; all pass with a real model.
+- The 9 known gaps on mock correspond to capabilities the rule table lacks; all pass with a real model.
 - The suite has been mutation-tested to fail when a defense is removed, so an all-green run is meaningful.
 
 Case table, grading layers, and real-model results: [docs/evaluation.md](docs/evaluation.md) (Chinese).
@@ -284,7 +327,7 @@ Details: [docs/operations.md](docs/operations.md) (Chinese).
 
 This is a practice project, not a production system:
 
-- No authentication, authorization, or multi-tenant isolation.
+- Permissions stop at three roles and one visibility rule — nothing per-department or tiered by amount — and there is no multi-tenant isolation: one deployment serves one organisation.
 - Metrics, rate limits, concurrency limits, and daily quota are in-process. Multiple instances count independently, and restarts reset them.
 - No tracing, log aggregation, or cross-instance aggregation.
 - The incremental parser does not guarantee `conclusion` is a top-level key; the full validation after the stream ends is the safety net.
@@ -298,7 +341,7 @@ Out of scope: RAG (the data is structured, so querying the database directly is 
 
 All data in this repository is fictional: names are placeholders such as "Zhang San / Li Si / Wang Wu", with no real people, ID numbers, phone numbers, or data from any real business system. Amounts are invented as well.
 
-The seed inserts 10 expense reports covering draft, pending approval, approved, rejected, and paid states, used by both normal-path and edge-case evaluations.
+The seed inserts 10 expense reports covering draft, pending approval, approved, rejected, and paid states, used by both normal-path and edge-case evaluations. Decided reports also carry an approver and an approval note — so asking "what was the approval comment?" on an approved or paid report gets the comment itself, while draft and pending ones correctly answer "not enough information".
 
 ## License
 

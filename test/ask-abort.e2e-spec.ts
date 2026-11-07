@@ -11,6 +11,7 @@ import type {
   LlmStream,
 } from '../src/modules/llm/llm.types.js';
 import { LLM_PROVIDER } from '../src/modules/llm/llm.types.js';
+import { loginCookieAt } from './support/session.js';
 
 /**
  * 非流式端点的「客户端断开」。
@@ -66,6 +67,7 @@ class HangingProvider implements LlmProvider {
 describe('非流式：客户端断开 (e2e)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
+  let cookie: string;
   const stub = new HangingProvider();
 
   beforeAll(async () => {
@@ -81,6 +83,7 @@ describe('非流式：客户端断开 (e2e)', () => {
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    cookie = await loginCookieAt(baseUrl);
   });
 
   afterAll(async () => {
@@ -93,7 +96,7 @@ describe('非流式：客户端断开 (e2e)', () => {
 
   const metrics = async (): Promise<MetricsSnapshot> =>
     (
-      await fetch(`${baseUrl}/assistant/metrics`)
+      await fetch(`${baseUrl}/assistant/metrics`, { headers: { cookie } })
     ).json() as Promise<MetricsSnapshot>;
 
   async function waitFor<T>(
@@ -120,7 +123,7 @@ describe('非流式：客户端断开 (e2e)', () => {
 
     const pending = fetch(`${baseUrl}/assistant/ask`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify(body),
       signal: controller.signal,
     }).catch(() => 'aborted' as const);
@@ -153,7 +156,7 @@ describe('非流式：客户端断开 (e2e)', () => {
 
     const response = await fetch(`${baseUrl}/assistant/ask`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify(body),
     });
 

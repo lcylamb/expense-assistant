@@ -19,5 +19,8 @@
     "strict": true,
     "strictPropertyInitialization": false,
     "types": ["vitest/globals", "node"]
-  }
+  },
+  // 前端有自己的 tsconfig（web/tsconfig.json：bundler 解析、react-jsx）。
+  // 不排除的话它会被这套 nodenext 规则再检查一遍，报一堆「缺少 .js 扩展名」。
+  "exclude": ["node_modules", "dist", "public", "web"]
 }

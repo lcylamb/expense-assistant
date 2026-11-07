@@ -18,6 +18,7 @@ import {
   type LlmProvider,
 } from '../src/modules/llm/llm.types.js';
 import { asResult, parseSse } from './support/sse.js';
+import { loginCookie } from './support/session.js';
 
 /**
  * 评测集。
@@ -98,6 +99,8 @@ interface RowData {
   amount: string;
   itemNames: string[];
   rejectReason?: string;
+  approvalNote?: string;
+  approverName?: string;
   status: string;
   /** UTC 日期（和模型看到的是同一个字符串） */
   submittedDate: string;
@@ -121,6 +124,8 @@ function toRow(expense: ExpenseWithItems): RowData {
     amount: expense.amount.toFixed(2),
     itemNames: expense.items.map((item) => item.name),
     rejectReason: expense.rejectReason ?? undefined,
+    approvalNote: expense.approvalNote ?? undefined,
+    approverName: expense.approverName ?? undefined,
     status: expense.status,
     submittedDate: expense.submittedAt.toISOString().slice(0, 10),
     decidedDate: expense.decidedAt?.toISOString().slice(0, 10),
@@ -212,8 +217,8 @@ const CASES: EvalCase[] = [
     expectTools: ['get_approval_record'],
     expect: () => ({
       insufficient: true,
-      // 数据里没有这两样，它们也就不该出现在依据里
-      evidenceExcludes: ['rejectReason', 'decidedAt'],
+      // 数据里没有这几样，它们也就不该出现在依据里
+      evidenceExcludes: ['rejectReason', 'decidedAt', 'approverName', 'approvalNote'],
     }),
   },
   {
@@ -226,7 +231,7 @@ const CASES: EvalCase[] = [
     // 两条一起才说明「信息不足」是按数据判的，不是按「看起来没走完」判的。
     expect: () => ({
       insufficient: true,
-      evidenceExcludes: ['decidedAt'],
+      evidenceExcludes: ['decidedAt', 'approverName', 'approvalNote'],
     }),
   },
   {
@@ -375,17 +380,21 @@ const CASES: EvalCase[] = [
     id: 'E14',
     code: 'BX-2026-0003',
     question: '是谁审批的？',
-    focus: '信息不足：数据里没有审批人',
+    focus: '能答：审批人不是申请人',
     expectTools: ['get_approval_record'],
-    // 审批记录只有状态、时间、驳回原因，没有「审批人」这一列。
-    // 模型很容易拿申请人（王五）顶上去 —— 那是把两个角色混成一个。
-    knownGap: {
-      provider: 'mock',
-      reason:
-        'mock 的「审批」规则只会回答审批完成时间，没有「谁审批」这个概念；' +
-        '它会把问题当成「审批到哪一步」，于是声称信息充分。',
+    // 审批记录里有 approverName（王经理）。模型很容易拿申请人（王五）顶上去 ——
+    // 那是把两个角色混成一个，所以除了「答出审批人」，还要检查它没答成申请人。
+    expect: (row) => ({
+      insufficient: false,
+      mustMention: [row.approverName!],
+      evidenceIncludes: ['approverName'],
+    }),
+    check: (result, row) => {
+      const applicant = String(row.context.record.applicant);
+      return result.conclusion.includes(applicant)
+        ? [`把申请人 ${applicant} 当成了审批人`]
+        : [];
     },
-    expect: () => ({ insufficient: true }),
   },
   {
     id: 'E15',
@@ -595,6 +604,20 @@ const CASES: EvalCase[] = [
       }
       return problems;
     },
+  },
+  {
+    id: 'E24',
+    code: 'BX-2026-0001',
+    question: '审批意见是什么？',
+    focus: '能答：已打款的单也有审批意见',
+    expectTools: ['get_approval_record'],
+    // 这条和 E03 / E04 是一对：草稿和待审批的单答「信息不足」，
+    // 已通过、已打款的单必须答得出**具体**的意见 —— 只有状态和时间等于没答。
+    expect: () => ({
+      insufficient: false,
+      mustMention: ['按差旅标准报销'],
+      evidenceIncludes: ['approvalNote'],
+    }),
   },
 ];
 
@@ -907,6 +930,7 @@ interface MultiTurnResult {
 
 describe('评测集 (e2e)', () => {
   let app: NestExpressApplication | undefined;
+  let cookie: string;
   let rows: Map<string, RowData>;
   const results: CaseResult[] = [];
   const multiTurnResults: MultiTurnResult[] = [];
@@ -934,6 +958,7 @@ describe('评测集 (e2e)', () => {
     app = moduleFixture.createNestApplication<NestExpressApplication>();
     applyGlobalSetup(app);
     await app.init();
+    cookie = await loginCookie(app);
 
     providerName = app.get<LlmProvider>(LLM_PROVIDER).name;
     // 规则表没有随机性，真模型有 —— 这条不是配置，是事实，所以写死在这里。
@@ -972,7 +997,7 @@ describe('评测集 (e2e)', () => {
   });
 
   const ask = (body: object) =>
-    request(app!.getHttpServer()).post('/assistant/ask').send(body);
+    request(app!.getHttpServer()).post('/assistant/ask').set('Cookie', cookie).send(body);
 
   it('预检：期望里手写的关键词，必须先证明它真的在数据里', () => {
     // 这是整个文件里最该有的一条。`mustMention` 里的字符串是我手写的，
@@ -982,6 +1007,9 @@ describe('评测集 (e2e)', () => {
 
     expect(reason('BX-2026-0003')).toContain('招待费超出');
     expect(reason('BX-2026-0009')).toContain('发票抬头');
+
+    // E24 的关键词同样从库里取（预检的活儿：手写的关键词必须先证明在数据里）。
+    expect(rows.get('BX-2026-0001')?.approvalNote).toContain('按差旅标准报销');
 
     // 预检和用例必须验**同一种关系**：`mustMention` 查的是「结论里含不含这个子串」，
     // 明细名会被拼进结论，所以这里也得用包含而不是全等。
@@ -1011,10 +1039,11 @@ describe('评测集 (e2e)', () => {
     expect(decided?.decidedDate).toBeDefined();
     expect(decided?.submittedDate).not.toBe(decided?.decidedDate);
 
-    // E14：审批记录里**确实没有**「审批人」这个字段 —— 否则「信息不足」是错的期望。
-    expect(
-      decided?.context.availableFields.some((field) => /approver/i.test(field)),
-    ).toBe(false);
+    // E14：审批记录里确实有「审批人」这一列，而且它不是申请人 ——
+    // 否则「能答出审批人」这条期望就落空了。
+    expect(decided?.context.availableFields).toContain('approverName');
+    expect(decided?.approverName).toBeTruthy();
+    expect(decided?.approverName).not.toBe(decided?.context.record.applicant);
 
     // E19：整份数据里也没有任何「标准 / 限额」字段。
     expect(
@@ -1058,7 +1087,7 @@ describe('评测集 (e2e)', () => {
 
     // ── 流式 ──
     const streamedBody = (
-      await request(app!.getHttpServer()).post('/assistant/askStream').send(body).expect(200)
+      await request(app!.getHttpServer()).post('/assistant/askStream').set('Cookie', cookie).send(body).expect(200)
     ).text;
     const frames = parseSse(streamedBody);
     const done = frames.find((frame) => frame.event === 'done');

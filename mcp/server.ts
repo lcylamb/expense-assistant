@@ -23,6 +23,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import type { Prisma } from '../src/generated/prisma/client.js';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 import {
   buildApprovalRecord,
@@ -66,7 +67,7 @@ async function call(fn: () => Promise<unknown>) {
 }
 
 /** Web 版工具遇到「单子没了」返回业务结果而非报错，这里保持同一语义 */
-async function byCode<T>(code: string, select: T) {
+async function byCode<T extends Prisma.ExpenseSelect>(code: string, select: T) {
   const expense = await prisma.expense.findUnique({ where: { code }, select });
   if (!expense) return { error: '这张报销单不存在' };
   return expense;
@@ -84,7 +85,7 @@ server.tool(
   '列出报销单（单号、标题、申请人、金额、状态）。先用它发现可以进一步查询的单号。',
   {
     status: z
-      .enum(['DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'PAID'])
+      .enum(['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'PAID'])
       .optional()
       .describe('按状态过滤，不传返回全部状态'),
     limit: z.number().int().min(1).max(50).default(20).describe('最多返回条数，默认 20'),
@@ -150,7 +151,7 @@ server.tool(
 
 server.tool(
   'get_approval_record',
-  '查一张报销单的审批记录：当前状态、决策时间（decidedAt）、驳回原因（rejectReason）。草稿/待审批的单子没有决策信息，字段缺省表示数据不足，不是出错。',
+  '查一张报销单的审批记录：当前状态、决策时间（decidedAt）、审批人（approverName）、审批意见（approvalNote）、驳回原因（rejectReason）。草稿/待审批的单子没有决策信息，字段缺省表示数据不足，不是出错。',
   codeArg,
   (a) =>
     call(async () => {
@@ -158,6 +159,8 @@ server.tool(
         code: true,
         status: true,
         decidedAt: true,
+        approverName: true,
+        approvalNote: true,
         rejectReason: true,
       });
       return 'error' in e ? e : buildApprovalRecord(e);

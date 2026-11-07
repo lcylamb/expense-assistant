@@ -73,6 +73,10 @@ jobs:
 
       - run: npm run lint
       - run: npx tsc --noEmit
+      # 前端有自己的 tsconfig（bundler 解析），要单独跑一遍；
+      # 它不在上面那次 tsc 的范围里（根 tsconfig 排除了 web/）。
+      - run: npx tsc -p web/tsconfig.json --noEmit
+      - run: npm run test:web
       - run: npm run build
       - run: npm test
       - run: npm run test:e2e
@@ -109,7 +113,13 @@ jobs:
             sleep 1
           done
 
-          body=$(curl -fsS -X POST http://127.0.0.1:3100/assistant/ask \
+          # 全局守卫要求登录（只有 /health 是公开的），先换一张会话 cookie。
+          # zhengshi 是审计视角：可见全部单据，不掺可见性变量。
+          curl -fsS -c /tmp/ea.jar -X POST http://127.0.0.1:3100/auth/login \
+            -H 'content-type: application/json' \
+            -d '{"username":"zhengshi","password":"demo1234"}' > /dev/null
+
+          body=$(curl -fsS -b /tmp/ea.jar -X POST http://127.0.0.1:3100/assistant/ask \
             -H 'content-type: application/json' \
             -d '{"code":"BX-2026-0003","question":"这张单子为什么被驳回了？"}')
           echo "$body"
@@ -131,7 +141,7 @@ jobs:
       # 没有第三处，空闲时照样 exit 0，问题只在真有人用的时候出现。
       - name: SIGTERM 走完钩子再退出（有活跃的流也一样）
         run: |
-          curl -sN --max-time 30 -X POST http://127.0.0.1:3100/assistant/askStream \
+          curl -sN --max-time 30 -b /tmp/ea.jar -X POST http://127.0.0.1:3100/assistant/askStream \
             -H 'content-type: application/json' \
             -d '{"code":"BX-2026-0006","question":"这笔钱都花在哪些项目上？"}' \
             > /tmp/stream.txt &

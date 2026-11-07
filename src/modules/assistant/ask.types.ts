@@ -83,3 +83,42 @@ export type AssistantStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; data: AskResult }
   | { type: 'error'; message: string };
+
+/**
+ * GET /assistant/expenses 的返回。
+ *
+ * 列表和概览统计**一次请求一起给**：概览页的数据全部来自这一份，
+ * 不会出现「列表说 4 张、卡片写 10 张」的两个真相。
+ * 统计口径 = 可见性过滤后的集合 —— 申请人看到的驳回数是「自己被驳了几张」，
+ * 不是全公司的。数字跟着身份走，这是权限模型的一部分，不是巧合。
+ */
+export interface ExpenseListItem {
+  code: string;
+  title: string;
+  applicant: string;
+  department: string;
+  /** 枚举原值（TRAVEL…），展示用的中文标签由调用方映射。 */
+  category: string;
+  /** 枚举原值（PAID…），同上。 */
+  status: string;
+  /** 十进制字符串，避免 JS 浮点数出现在金额里。 */
+  amount: string;
+  submittedAt: string;
+}
+
+export interface ExpenseListSummary {
+  count: number;
+  /** 各状态计数，键为状态枚举原值；没出现的状态就是 0，不占键。 */
+  byStatus: Record<string, number>;
+  /** 可见单子的报销总额（十进制字符串）。 */
+  totalAmount: string;
+  /** 可见单子里被驳回的张数。 */
+  rejectedCount: number;
+}
+
+export interface ExpenseListResult {
+  /** 服务端收到的身份；不带身份的兼容路径为 null。 */
+  viewer: { name: string; role: string } | null;
+  expenses: ExpenseListItem[];
+  summary: ExpenseListSummary;
+}

@@ -69,6 +69,8 @@ interface MockRecord {
   status?: string;
   submittedAt?: string;
   decidedAt?: string;
+  approverName?: string;
+  approvalNote?: string;
   rejectReason?: string;
   items?: MockItem[];
 }
@@ -164,22 +166,39 @@ const RULES: Array<{ match: RegExp; answer: (record: MockRecord) => MockAnswer }
   },
   {
     match: /审批|审批意见|批准|决定|决策|通过了吗/,
-    answer: (record) =>
-      record.decidedAt
-        ? {
-            conclusion: `${record.code} 已于 ${shortDate(record.decidedAt)} 完成审批，当前状态：${
-              STATUS_LABEL[record.status ?? ''] ?? record.status
-            }。`,
-            evidence: ['code', 'status', 'decidedAt'],
-            insufficient: false,
-          }
-        : {
-            conclusion: `${record.code} 还没走到审批环节（${
-              STATUS_LABEL[record.status ?? ''] ?? record.status
-            }），数据里没有审批意见。`,
-            evidence: ['code', 'status'],
-            insufficient: true,
-          },
+    answer: (record) => {
+      if (!record.decidedAt) {
+        return {
+          conclusion: `${record.code} 还没走到审批环节（${
+            STATUS_LABEL[record.status ?? ''] ?? record.status
+          }），数据里没有审批意见。`,
+          evidence: ['code', 'status'],
+          insufficient: true,
+        };
+      }
+
+      const evidence = ['code', 'status', 'decidedAt'];
+      const parts = [
+        `${record.code} 已于 ${shortDate(record.decidedAt)} 完成审批，当前状态：${
+          STATUS_LABEL[record.status ?? ''] ?? record.status
+        }。`,
+      ];
+      if (record.approverName) {
+        evidence.push('approverName');
+        parts.push(`审批人：${record.approverName}。`);
+      }
+      // 通过与打款的单意见在 approvalNote，驳回的单整改要求在 rejectReason ——
+      // 两个都按实际存在的字段说话，缺哪个就少说哪句。
+      if (record.approvalNote) {
+        evidence.push('approvalNote');
+        parts.push(`审批意见：${record.approvalNote}`);
+      }
+      if (record.rejectReason) {
+        evidence.push('rejectReason');
+        parts.push(`驳回原因：${record.rejectReason}`);
+      }
+      return { conclusion: parts.join(''), evidence, insufficient: false };
+    },
   },
   {
     match: /提交|什么时候提|时间|日期/,
@@ -473,6 +492,8 @@ function recordFromToolMessages(messages: LlmMessage[]): MockRecord | null {
     if (source.status !== undefined) record.status = source.status;
     if (source.submittedAt !== undefined) record.submittedAt = source.submittedAt;
     if (source.decidedAt !== undefined) record.decidedAt = source.decidedAt;
+    if (source.approverName !== undefined) record.approverName = source.approverName;
+    if (source.approvalNote !== undefined) record.approvalNote = source.approvalNote;
     if (source.rejectReason !== undefined) record.rejectReason = source.rejectReason;
     if (Array.isArray(source.items)) record.items = source.items;
     merged = true;

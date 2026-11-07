@@ -5,6 +5,10 @@ node_modules/
 dist/
 build/
 
+# 前端构建产物。源码在 web/，`npm run build:web` 生成到 public/，
+# 由 Nest 的 useStaticAssets 托管。带内容哈希的文件名进仓库只会制造噪声。
+public/
+
 # 环境变量 —— ⚠️ 绝不要提交 .env。部署平台的 secret 才是唯一正确的位置。
 #
 # 写成 `.env.*` 通配而不是一个个列，是因为「漏掉一个变体」是这里唯一的失败方式，

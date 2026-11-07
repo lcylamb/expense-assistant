@@ -11,6 +11,8 @@
 # 拷进 linux 镜像会以一种「装是装上了，跑起来报 exec format error」的方式炸。
 node_modules
 dist
+# 前端产物同上：镜像里由 vite 重建（web/ 是源码，会进 build 阶段）
+public
 
 # Prisma 生成物：镜像里由 `prisma generate` 重建（见 Dockerfile 的 build 阶段）
 src/generated

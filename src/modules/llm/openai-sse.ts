@@ -70,7 +70,7 @@ export async function* sseDataFrames(
 
       // ⚠️ `{ stream: true }` 不能省。少了它，一个 UTF-8 汉字正好跨在两次 read 中间时，
       // 两次都会解出替换字符（U+FFFD）—— 症状是答案里偶尔冒出一个「�」。
-      // 这和 public/index.html 里那段客户端代码是同一个坑。
+      // 这和 web/src/api/client.ts 里那段客户端代码是同一个坑。
       //
       // 顺手把 CRLF 归一成 LF：SSE 规范允许 CRLF 结尾，而 JSON 字符串里的裸 CR
       // 本来就是非法的（必须写成 \\r），所以这一步不会改坏任何载荷。
