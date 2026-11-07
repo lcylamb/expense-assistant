@@ -35,7 +35,9 @@ docker compose down
 - 启用后关闭在毫秒级完成，销毁钩子（数据库 `$disconnect`）仍会先执行。
 - 代价是在途的普通请求也会被切断。更细的做法是「停止接受新连接 → 限时窗口 → 到点强制断开」，此处未实现。
 
-**探活。** `/health` 执行一次 `select 1`（2 秒上限）。端口可连接但数据库不可达时返回 `503` + `{"status":"error","db":"down"}`。
+**探活。** `/health` 执行一次 `select 1`（2 秒上限），**并检查必需的表在不在**（`expenses` / `expense_items` / `users`）。端口可连接但数据库不可达时返回 `503` + `{"status":"error","db":"down","problem":"…"}`。
+
+查表是必要的：托管平台不会替你跑迁移，「代码更新了、生产库还停在旧迁移」时 `select 1` 照样成功 —— 探针报健康、页面能打开，而第一条业务查询就报 `relation "users" does not exist`。缺表时启动也会直接失败（见 `PrismaService.onModuleInit`），错误信息里写明要跑什么。
 
 ## 部署
 

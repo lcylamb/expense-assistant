@@ -202,7 +202,7 @@ At most 3 turns. History is context only; it does not expand which fields may be
 | `POST` | `/assistant/askStream` | SSE: `delta` → `done`, or `error` |
 | `GET` | `/assistant/expenses[?category=TRAVEL]` | Expenses visible to the logged-in account + summary |
 | `GET` | `/assistant/metrics` | In-process metrics snapshot |
-| `GET` | `/health` | Runs `select 1`; returns `503` when the database is unavailable |
+| `GET` | `/health` | Runs `select 1` and checks that the required tables exist; returns `503` when the database is unavailable or a table is missing |
 
 Every endpoint except `/auth/login`, `/auth/logout` and `/health` requires a session cookie (`401` otherwise). Every response carries `X-Request-Id`; logs are JSON lines that carry the same value as `reqId`.
 

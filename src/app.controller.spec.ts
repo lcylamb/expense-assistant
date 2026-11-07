@@ -3,7 +3,7 @@ import { AppController } from './app.controller.js';
 import type { PrismaService } from './prisma/prisma.service.js';
 
 /**
- * 探活接口的三个状态：库在、库报错、库不响应。
+ * 探活接口的三个状态：库在、库报错、库不响应，外加「库在但表缺」。
  *
  * 第三个是重点。前两个用 e2e 也能测，但「不响应」在 e2e 里要么等两秒、
  * 要么把超时调小 —— 两种都会让测试变慢或变脆。这里直接把 `$queryRaw`
@@ -12,10 +12,25 @@ import type { PrismaService } from './prisma/prisma.service.js';
  * 这个状态之所以值得一条用例：库以「连接被黑洞」的方式挂掉时，查询不会报错，
  * 它会一直挂着。没有上限的话，探针自己先超时，平台看到的是「没响应」而不是
  * 「库不可用」—— 而这两件事的下一步动作完全不同。
+ *
+ * 第四个（表缺）是真实发生过的线上状态：托管平台不跑迁移，生产库停在旧迁移，
+ * `select 1` 照样成功，而第一条业务查询报 relation does not exist。
  */
 
-function controllerWith(queryRaw: () => Promise<unknown>): AppController {
-  return new AppController({ $queryRaw: queryRaw } as unknown as PrismaService);
+/**
+ * 造一个 PrismaService 桩。
+ *
+ * `missingTables` 是真实实现调的那一个方法 —— 这里直接给结果，
+ * 因为「哪些表该在」是 prisma.service.ts 的职责，控制器只负责把结果报出去。
+ */
+function controllerWith(
+  queryRaw: () => Promise<unknown>,
+  missingTables: () => Promise<string[]> = async () => [],
+): AppController {
+  return new AppController({
+    $queryRaw: queryRaw,
+    missingTables,
+  } as unknown as PrismaService);
 }
 
 afterEach(() => {
@@ -49,11 +64,35 @@ describe('AppController（探活）', () => {
     expect(error).toBeInstanceOf(ServiceUnavailableException);
     // 状态码 503 已经说明了「暂时不可用」；body 里再分出 `db: down`，
     // 是为了让「进程死了」和「库死了」在调用方那里也能区分。
-    expect((error as ServiceUnavailableException).getResponse()).toEqual({
-      status: 'error',
-      db: 'down',
-    });
+    const body = (error as ServiceUnavailableException).getResponse() as Record<
+      string,
+      unknown
+    >;
+    expect(body.status).toBe('error');
+    expect(body.db).toBe('down');
+    expect(body.problem).toContain("Can't reach database server");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('数据库不可用'));
+  });
+
+  it('库在但表缺 → 503，并且说清缺哪张表、该跑什么', async () => {
+    // `select 1` 成功 —— 这正是它有欺骗性的地方。只发 select 1 的话，
+    // 平台看到的是「健康」，用户拿到的是 500。
+    const queryRaw = vi.fn(async () => [{ '?column?': 1 }]);
+    const controller = controllerWith(queryRaw, async () => ['users']);
+
+    const error = await controller.health().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    const body = (error as ServiceUnavailableException).getResponse() as Record<
+      string,
+      unknown
+    >;
+    expect(body.status).toBe('error');
+    expect(body.db).toBe('down');
+    // 处置方式完全取决于故障类型：缺表是「忘了跑 migrate deploy」，
+    // 这句话是唯一能让人立刻对症下药的地方。
+    expect(body.problem).toContain('users');
+    expect(body.problem).toContain('migrate deploy');
   });
 
   it('库不响应 → 到点就返回 503，不会一直挂着', async () => {

@@ -201,7 +201,7 @@ data: {"message":"模型调用失败，请重试"}
 | `POST` | `/assistant/askStream` | SSE：`delta` → `done`，或中途 `error` |
 | `GET` | `/assistant/expenses[?category=TRAVEL]` | 当前登录账号可见的单据 + 概览统计 |
 | `GET` | `/assistant/metrics` | 进程内指标快照 |
-| `GET` | `/health` | 执行一次 `select 1`，数据库不可用时返回 `503` |
+| `GET` | `/health` | 执行一次 `select 1` 并检查必需的表；库不可用或表缺失时返回 `503` |
 
 除 `/auth/login`、`/auth/logout`、`/health` 之外，所有端点都要求会话 cookie，否则 `401`。所有响应带 `X-Request-Id`，日志为 JSON 行，其中 `reqId` 字段与响应头同值。
 

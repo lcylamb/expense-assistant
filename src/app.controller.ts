@@ -43,6 +43,13 @@ export class AppController {
    * 症状是「监控全绿，用户全在报错」。所以这里发一条 `select 1`，
    * 和启动时那道检查（`PrismaService.onModuleInit`）用同一个证伪手段。
    *
+   * ── 为什么还要查表 ──
+   *
+   * `select 1` 只能证明「连着一个 Postgres」。托管平台不会替你跑迁移，
+   * 「代码更新了、生产库还停在旧迁移」是最常见的一种线上半死状态：
+   * 探针看到 200，页面能打开，一登录就 500（relation does not exist）。
+   * 缺表时这里直接报 503，让探针和人都看见它。
+   *
    * 代价要说清楚：库挂掉时探活会失败，平台于是重启实例，而实例启动时又要求库可达
    * （见 onModuleInit）—— 库没恢复之前会反复重启。这是有意选的：一个读不了数据的
    * 实例对用户没有价值，反复重启至少让「它不健康」这件事一眼可见。
@@ -60,21 +67,25 @@ export class AppController {
   @SkipThrottle()
   @Get('health')
   async health(): Promise<{ status: 'ok'; db: 'ok' }> {
-    if (!(await this.pingDatabase())) {
-      throw new ServiceUnavailableException({ status: 'error', db: 'down' });
+    const problem = await this.pingDatabase();
+    if (problem) {
+      throw new ServiceUnavailableException({ status: 'error', db: 'down', problem });
     }
 
     return { status: 'ok', db: 'ok' };
   }
 
   /**
-   * 发一条 `select 1`，最多等 `DB_PING_TIMEOUT_MS`。
+   * 发一条 `select 1`，再看表在不在，最多等 `DB_PING_TIMEOUT_MS`。
    *
    * 用 `Promise.race` 而不是给驱动配超时：连接串是部署方给的，不该为了探活
    * 反过来要求它带一个参数。超时后查询本身还会在后台跑完 —— 那是连接池的事，
    * 这里只负责不让探针挂住。
+   *
+   * 返回**问题描述**而不是布尔值：两种失败（连不上、表缺失）的处置完全不同 ——
+   * 前者是环境问题，后者是「忘了跑迁移」，探针响应里应该能看出来。
    */
-  private async pingDatabase(): Promise<boolean> {
+  private async pingDatabase(): Promise<string | null> {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
@@ -87,14 +98,19 @@ export class AppController {
           );
         }),
       ]);
-      return true;
+
+      const missing = await this.prisma.missingTables();
+      if (missing.length > 0) {
+        return `缺少表 ${missing.join(', ')} —— 生产库还没跑最新迁移（npx prisma migrate deploy）`;
+      }
+
+      return null;
     } catch (error) {
       // 每次探针失败记一条：这是「库从什么时候开始连不上」的唯一时间线。
       // 平台那边的「不健康」是结果，不是原因。
-      this.logger.warn(
-        `健康检查：数据库不可用（${error instanceof Error ? error.message : String(error)}）`,
-      );
-      return false;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`健康检查：数据库不可用（${message}）`);
+      return message;
     } finally {
       // 不清理的话，每次成功的探活都会留下一个 2s 的定时器 ——
       // 它不影响结果，但会让进程在退出时多等一会儿、测试里也会拖着线程。
