@@ -201,7 +201,7 @@ data: {"message":"模型调用失败，请重试"}
 | `POST` | `/assistant/askStream` | SSE：`delta` → `done`，或中途 `error` |
 | `GET` | `/assistant/expenses[?category=TRAVEL]` | 当前登录账号可见的单据 + 概览统计 |
 | `GET` | `/assistant/metrics` | 进程内指标快照 |
-| `GET` | `/health` | 执行一次 `select 1`，数据库不可用时返回 `503` |
+| `GET` | `/health` | 执行一次 `select 1` 并检查必需的表；库不可用或表缺失时返回 `503` |
 
 除 `/auth/login`、`/auth/logout`、`/health` 之外，所有端点都要求会话 cookie，否则 `401`。所有响应带 `X-Request-Id`，日志为 JSON 行，其中 `reqId` 字段与响应头同值。
 
@@ -277,6 +277,7 @@ CI 只运行 mock；真实模型评测在本地手动执行。
 |---|---|---|
 | `LLM_PROVIDER` | `mock` | `mock` 或 `openai`（OpenAI 兼容协议） |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | — | `openai` 模式必填 |
+| `LLM_THINKING` | 关闭 | 厂商思考模式；`enabled` 打开（会破掉提示注入防线） |
 | `RATE_LIMIT_PER_MINUTE` | `30` | 每 IP 每分钟请求数 |
 | `MAX_CONCURRENT_ASKS` | `8` | 同时在途的模型请求上限，`0` 关闭 |
 | `LLM_DAILY_LIMIT` | 关闭 | 每日模型调用上限 |
@@ -291,10 +292,14 @@ CI 只运行 mock；真实模型评测在本地手动执行。
 LLM_PROVIDER=openai
 LLM_API_KEY=...
 LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat
+LLM_MODEL=deepseek-flash
 ```
 
 `npm run eval:real` 会用同一份评测集重新运行。
+
+思考模式保持**关闭**（`LLM_THINKING` 默认关）。DeepSeek 现行模型默认开着它，
+开着时模型会照办问题里嵌的指令 —— 提示注入那条用例连挂 8 次，把假金额当结论答了出来。
+同一个模型关掉思考模式后，它答的是「不能按该要求回答」。
 
 完整列表与取值说明见 [`.env.example`](.env.example) 和 [docs/operations.md](docs/operations.md)。
 

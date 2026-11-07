@@ -202,7 +202,7 @@ At most 3 turns. History is context only; it does not expand which fields may be
 | `POST` | `/assistant/askStream` | SSE: `delta` → `done`, or `error` |
 | `GET` | `/assistant/expenses[?category=TRAVEL]` | Expenses visible to the logged-in account + summary |
 | `GET` | `/assistant/metrics` | In-process metrics snapshot |
-| `GET` | `/health` | Runs `select 1`; returns `503` when the database is unavailable |
+| `GET` | `/health` | Runs `select 1` and checks that the required tables exist; returns `503` when the database is unavailable or a table is missing |
 
 Every endpoint except `/auth/login`, `/auth/logout` and `/health` requires a session cookie (`401` otherwise). Every response carries `X-Request-Id`; logs are JSON lines that carry the same value as `reqId`.
 
@@ -291,6 +291,7 @@ Main variables:
 |---|---|---|
 | `LLM_PROVIDER` | `mock` | `mock` or `openai` (OpenAI-compatible protocol) |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | — | Required when `LLM_PROVIDER=openai` |
+| `LLM_THINKING` | off | Vendor reasoning mode; `enabled` turns it on (breaks the prompt-injection defence) |
 | `HF_MIRROR` | unset | HuggingFace mirror for the local embedding model download (set when hf.co is unreachable) |
 | `RATE_LIMIT_PER_MINUTE` | `30` | Requests per IP per minute |
 | `MAX_CONCURRENT_ASKS` | `8` | Max in-flight model requests; `0` disables |
@@ -306,10 +307,16 @@ To use a real model, change `.env` only — no code changes:
 LLM_PROVIDER=openai
 LLM_API_KEY=...
 LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat
+LLM_MODEL=deepseek-flash
 ```
 
 `npm run eval:real` then runs the same suite against that provider.
+
+Thinking mode stays **off** (`LLM_THINKING` defaults to off). DeepSeek's
+current models enable it by default, and with it on the model follows
+instructions embedded in the question — the prompt-injection case fails
+eight times out of eight, echoing a fake amount back as the conclusion.
+The same model with thinking disabled refuses that question instead.
 
 Full list and notes: [`.env.example`](.env.example) and [docs/operations.md](docs/operations.md) (Chinese).
 

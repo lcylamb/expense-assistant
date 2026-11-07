@@ -88,6 +88,7 @@ function makeProvider(
     maxTokens: 256,
     jsonMode: true,
     streamUsage: true,
+    thinking: false,
     ...overrides,
   });
 }
@@ -231,6 +232,33 @@ describe('OpenAiCompatibleProvider', () => {
       expect(sent.body.max_tokens).toBe(256);
       // 结构化输出的第一层（约束）。第二层是 parseAnswer，撤掉哪层都不行。
       expect(sent.body.response_format).toEqual({ type: 'json_object' });
+    });
+
+    it('默认显式关掉厂商的思考模式', async () => {
+      const { baseUrl, requests } = await startVendor((res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ model: MODEL, choices: [{ message: { content: 'ok' } }] }));
+      });
+
+      await makeProvider(baseUrl).complete(MESSAGES);
+
+      // 不是「不写这个字段」，而是**写明 disabled**。
+      //
+      // 原因：DeepSeek 的 `deepseek-flash` / `deepseek-v4-pro` 默认开着思考模式，
+      // 而开着时它会把用户问题里的假金额当成指令照抄进结论（实测 E22 连挂 8 次）。
+      // 靠「模型名恰好是 thinking-off 的别名」来躲是不作数的 ——
+      // 别名随时可能被摘掉，那天这个项目里唯一拦注入的就是模型自己守规矩。
+      expect(requests[0].body.thinking).toEqual({ type: 'disabled' });
+    });
+
+    it('LLM_THINKING=enabled 时不带 thinking 字段', async () => {
+      const { baseUrl, requests } = await startVendor((res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ model: MODEL, choices: [{ message: { content: 'ok' } }] }));
+      });
+
+      await makeProvider(baseUrl, { thinking: true }).complete(MESSAGES);
+      expect(requests[0].body).not.toHaveProperty('thinking');
     });
 
     it('LLM_JSON_MODE=false 时不带 response_format', async () => {

@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { ConfigService } from '@nestjs/config';
 import { createLlmProvider } from './llm.module.js';
 import { MockLlmProvider } from './mock-llm.provider.js';
@@ -69,5 +71,47 @@ describe('createLlmProvider', () => {
     expect(() =>
       createLlmProvider(makeConfig({ ...OPENAI, LLM_MAX_ATTEMPTS: '0' })),
     ).toThrow(/LLM_MAX_ATTEMPTS/);
+  });
+
+  it('思考模式默认关，只有显式写 enabled 才开', async () => {
+    // 这里要断言的是「配置 → 请求体」的映射，所以真的发一次请求看厂商收到什么。
+    // 只断言「构造没炸」等于没断言 —— 那条路径上 thinking 的值根本没被读。
+    const seen: Record<string, unknown>[] = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        seen.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ model: 'test-model', choices: [{ message: { content: 'ok' } }] }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const base = { ...OPENAI, LLM_BASE_URL: `http://127.0.0.1:${port}/v1` };
+
+    try {
+      await createLlmProvider(makeConfig(base)).complete([
+        { role: 'user', content: 'hi' },
+      ]);
+      // 默认：写明 disabled。
+      expect(seen[0].thinking).toEqual({ type: 'disabled' });
+
+      await createLlmProvider(makeConfig({ ...base, LLM_THINKING: 'enabled' })).complete([
+        { role: 'user', content: 'hi' },
+      ]);
+      // 显式开：不带这个字段，让厂商用它自己的默认值。
+      expect(seen[1]).not.toHaveProperty('thinking');
+
+      // 拼错的枚举按「关」处理 —— 不因为写错就启动失败，
+      // 但也绝不会因为拼错而意外打开了思考模式（那会破掉注入防线）。
+      await createLlmProvider(makeConfig({ ...base, LLM_THINKING: 'true' })).complete([
+        { role: 'user', content: 'hi' },
+      ]);
+      expect(seen[2].thinking).toEqual({ type: 'disabled' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

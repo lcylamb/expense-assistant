@@ -35,7 +35,9 @@ docker compose down
 - 启用后关闭在毫秒级完成，销毁钩子（数据库 `$disconnect`）仍会先执行。
 - 代价是在途的普通请求也会被切断。更细的做法是「停止接受新连接 → 限时窗口 → 到点强制断开」，此处未实现。
 
-**探活。** `/health` 执行一次 `select 1`（2 秒上限）。端口可连接但数据库不可达时返回 `503` + `{"status":"error","db":"down"}`。
+**探活。** `/health` 执行一次 `select 1`（2 秒上限），**并检查必需的表在不在**（`expenses` / `expense_items` / `users`）。端口可连接但数据库不可达时返回 `503` + `{"status":"error","db":"down","problem":"…"}`。
+
+查表是必要的：托管平台不会替你跑迁移，「代码更新了、生产库还停在旧迁移」时 `select 1` 照样成功 —— 探针报健康、页面能打开，而第一条业务查询就报 `relation "users" does not exist`。缺表时启动也会直接失败（见 `PrismaService.onModuleInit`），错误信息里写明要跑什么。
 
 ## 部署
 
@@ -95,7 +97,8 @@ CI 只运行 mock。真实模型评测在本地手动执行：其输出随模型
 | `LLM_PROVIDER` | `mock` | `mock`（规则表）或 `openai`（OpenAI 兼容协议） |
 | `LLM_API_KEY` | — | `openai` 模式必填 |
 | `LLM_BASE_URL` | — | `openai` 模式必填，例如 `https://api.deepseek.com/v1` |
-| `LLM_MODEL` | — | `openai` 模式必填 |
+| `LLM_MODEL` | — | `openai` 模式必填，例如 `deepseek-flash` |
+| `LLM_THINKING` | 关闭 | 厂商思考模式；`enabled` 打开（会破掉提示注入防线，实测连挂 8 次） |
 | `LLM_TIMEOUT_MS` | `30000` | 单轮调用上限；流式下约束首字等待与帧间沉默 |
 | `LLM_MAX_TOKENS` | `1024` | 输出上限 |
 | `LLM_MAX_ATTEMPTS` | `3` | 含第一次的重试次数，`1` 表示关闭 |

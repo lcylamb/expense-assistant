@@ -168,7 +168,75 @@ describe('取单号时库连不上 (e2e)', () => {
       .get('/health')
       .expect(503);
 
-    expect(response.body).toEqual({ status: 'error', db: 'down' });
+    expect(response.body.status).toBe('error');
+    expect(response.body.db).toBe('down');
+    // 带上原因：处置方式取决于故障类型（连不上 vs 缺表），不该让人猜。
+    expect(response.body.problem).toContain('db:5432');
+  });
+});
+
+describe('生产库停在旧迁移：表缺了 (e2e)', () => {
+  let app: NestExpressApplication;
+
+  beforeAll(async () => {
+    // 这是真实发生过的状态：托管平台不跑迁移，部署了新代码但生产库还停在
+    // 旧迁移。于是 `select 1` 成功、页面能打开，第一条业务查询就报
+    // relation does not exist。
+    //
+    // 桩要模拟的是这个：**连得上**，但表不全。
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(AuthService)
+      .useValue({
+        resolve: async () => ({
+          id: 'u-zhengshi',
+          username: 'zhengshi',
+          name: '郑十',
+          role: 'auditor',
+          department: '内审部',
+        }),
+      })
+      .overrideProvider(PrismaService)
+      .useValue({
+        // `select 1` 成功 —— 这正是它有欺骗性的地方。
+        $queryRaw: async () => [{ '?column?': 1 }],
+        // 缺表这件事由 PrismaService.missingTables() 负责判断，
+        // 这里直接给结果 —— 控制器只负责把「缺了什么」报出去。
+        missingTables: async () => ['users'],
+        expense: {
+          findUnique: async () => {
+            throw new Error('relation "expenses" does not exist');
+          },
+        },
+      } as unknown as PrismaService)
+      .compile();
+
+    app = moduleFixture.createNestApplication<NestExpressApplication>();
+    applyGlobalSetup(app);
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('探活必须红：select 1 成功但表不全，不能算健康', async () => {
+    // 只发 `select 1` 的话这里会返回 200 —— 平台看到「健康」，
+    // 不重启实例、不提醒任何人，用户却拿到 500。
+    const response = await request(app.getHttpServer()).get('/health').expect(503);
+
+    expect(response.body.status).toBe('error');
+    expect(response.body.db).toBe('down');
+  });
+
+  it('响应里说清缺了什么表、该做什么', async () => {
+    // 「不健康」还不够 —— 处置方式不一样：连不上是环境问题，
+    // 缺表是「忘了跑 migrate deploy」。这句提示是唯一能让人立刻对症下药的地方。
+    const response = await request(app.getHttpServer()).get('/health').expect(503);
+
+    expect(response.body.problem).toContain('users');
+    expect(response.body.problem).toContain('migrate deploy');
   });
 });
 
