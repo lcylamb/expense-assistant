@@ -335,7 +335,7 @@ This is a practice project, not a production system:
 - Mock token counts are estimated from character length, not tokenizer output.
 - Real-model evaluation is a single sample; outputs are not guaranteed to be reproducible.
 
-Out of scope: RAG (the data is structured, so querying the database directly is the right approach), complex agent orchestration, and conversation persistence.
+Out of scope: RAG (the data is structured, so querying the database directly is the right approach), complex agent orchestration, and conversation persistence. **No approval workflow** — there are no approval nodes, no routing between approvers, no countersigning or reminders, and no approval-history table: a report only carries the outcome of a decision (status, decided-at time, approver, approval note or rejection reason). The three-tier approval described in the policy handbook is a clause of the fictional company policy, not a capability this system implements.
 
 ## Data
 

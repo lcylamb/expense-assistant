@@ -149,7 +149,8 @@ const getApprovalRecord: AgentTool = {
       '查这张报销单的审批记录：当前状态、决策时间（decidedAt）、审批人（approverName）、' +
       '审批意见（approvalNote）、驳回原因（rejectReason）。' +
       '通过与打款的单意见在 approvalNote，驳回的单整改要求在 rejectReason。' +
-      '草稿或待审批的单子没有决策信息，这些字段都不会出现 —— 这表示数据不足，不是出错。',
+      '草稿或待审批的单子没有决策信息，这些字段都不会出现 —— 这表示数据不足，不是出错。' +
+      '工具只返回单据上已存的决策结果，不涉及审批流程本身（没有节点、流转或催办记录）。',
     parameters: NO_ARGS,
   },
   async run({ expenseId, prisma, viewer }) {
