@@ -261,7 +261,7 @@ the embedding model puts the process at ~714MB RSS, so small-memory hosts
 
 ```
 npm run eval        (mock)      : 14 passed,  9 known gaps, 0 unexpected
-npm run eval:real   (DeepSeek)  : 23 passed,  0 known gaps, 0 unexpected
+npm run eval:real   (DeepSeek)  : 24 passed,  0 known gaps, 0 unexpected
 ```
 
 - Structural checks are never waived: cited fields must exist, amounts and dates must be traceable, tools must not fail, and both endpoints must return the same conclusion under a deterministic provider.

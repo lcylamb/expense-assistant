@@ -233,13 +233,21 @@ data: {"message":"模型调用失败，请重试"}
 
 详见 [docs/design.md](docs/design.md)。
 
+## 政策问答（RAG）
+
+`POST /knowledge/ask` 回答费用制度手册里的问题 —— 它和单据问答是一对：一个查「这张单发生了什么」，一个查「制度怎么规定的」。流程是切块 → 本地 embedding → 向量检索 → 带引用校验的生成，中间有一个 LangGraph 节点会给检索质量打分，不够就改写一次查询再试（走这条路时返回里带 `queryRewritten: true`；问题超出制度范围时答「制度未覆盖」，`sources` 为空）。
+
+向量库是 60 行的内存实现，套在标准的 `VectorStore` 接口后面（`@langchain/community` v1 移除了 MemoryVectorStore），以后换 pgvector 只需要动一个文件。embedding 跑在本地 —— DeepSeek 没有 embedding 接口。
+
+必须配真实模型（`LLM_API_KEY`），并一次性下载约 90MB 的本地 embedding 模型；索引在第一次提问时懒加载。内存要注意：embedding 模型把进程 RSS 推到约 714MB，内存小的主机（Render 免费档只有 512MB）必须设 `KNOWLEDGE_ENABLED=false`。细节见 [docs/knowledge.md](docs/knowledge.md)。
+
 ## 评测
 
 24 条用例，每条同时请求两条端点；期望值大多从数据库计算得出，不是手写常量。
 
 ```
 npm run eval        （mock）   ：通过 14　已知不足 9　不符预期 0
-npm run eval:real   （DeepSeek）：通过 23　已知不足 0　不符预期 0
+npm run eval:real   （DeepSeek）：通过 24　已知不足 0　不符预期 0
 ```
 
 - 结构底线永远算失败，不豁免：依据字段必须存在、金额与日期必须可溯源、工具不能失败、确定性 provider 下两条端点结论相同。
