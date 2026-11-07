@@ -11,6 +11,7 @@ import type {
   LlmStream,
 } from '../src/modules/llm/llm.types.js';
 import { LLM_PROVIDER } from '../src/modules/llm/llm.types.js';
+import { loginCookieAt } from './support/session.js';
 
 /**
  * 并发上限 (e2e)。
@@ -58,6 +59,7 @@ class HangingProvider implements LlmProvider {
 describe('并发上限 (e2e)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
+  let cookie: string;
   const stub = new HangingProvider();
   const originalLimit = process.env.MAX_CONCURRENT_ASKS;
 
@@ -74,6 +76,7 @@ describe('并发上限 (e2e)', () => {
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    cookie = await loginCookieAt(baseUrl);
   });
 
   afterAll(async () => {
@@ -90,13 +93,13 @@ describe('并发上限 (e2e)', () => {
 
   const metrics = async (): Promise<MetricsSnapshot> =>
     (
-      await fetch(`${baseUrl}/assistant/metrics`)
+      await fetch(`${baseUrl}/assistant/metrics`, { headers: { cookie } })
     ).json() as Promise<MetricsSnapshot>;
 
   function startStream(signal?: AbortSignal): Promise<Response> {
     return fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify(body),
       signal,
     });
@@ -142,7 +145,7 @@ describe('并发上限 (e2e)', () => {
     // 换一个端点打：两个模型端点共用同一份额度。
     const rejected = await fetch(`${baseUrl}/assistant/ask`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify(body),
     });
     expect(rejected.status).toBe(429);

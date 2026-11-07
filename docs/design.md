@@ -30,7 +30,7 @@ src/
 ├─ logging.ts                 请求 id、访问日志、pino 配置
 └─ ip-throttler.guard.ts      按 IP 统一计数的限流守卫
 
-public/index.html             演示页
+web/                          前端源码（React 18 + Vite + TS，构建产物进 public/）
 scripts/ask-stream-probe.mjs  裸流探测脚本
 test/                         e2e 与评测
 ```
@@ -78,9 +78,11 @@ MOCK_MISBEHAVE=unknown-field npm run start:dev
 |---|---|---|
 | `get_expense_summary` | 表头：申请人、部门、金额、状态、提交时间 | `amount`、`submittedAt` |
 | `list_expense_items` | 明细与合计 | `items[0].name`、`items[0].spentOn` |
-| `get_approval_record` | 审批：决策时间、驳回原因 | `status`、`rejectReason` |
+| `get_approval_record` | 审批：决策时间、审批人、审批意见、驳回原因 | `status`、`approverName`、`approvalNote`、`rejectReason` |
 
 循环最多 4 轮。`trace` 记录实际执行了哪些工具以及是否成功，由服务端生成，不采信模型的自我描述。
+
+`get_approval_record` 返回的是**单据上已存的决策结果**（状态、决策时间、审批人、审批意见或驳回原因），不是审批流程本身 —— 本项目不做审批流：没有审批节点、流转、加签、催办，也没有审批记录表。知识库手册里那套三级审批是虚构公司的制度条款，见 [knowledge.md](knowledge.md) 的边界说明。
 
 三个安全边界：
 

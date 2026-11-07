@@ -7,6 +7,8 @@ import { AppController } from './app.controller.js';
 import { IpThrottlerGuard } from './ip-throttler.guard.js';
 import { PINO_HTTP_OPTIONS } from './logging.js';
 import { AssistantModule } from './modules/assistant/assistant.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
+import { SessionGuard } from './modules/auth/session.guard.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 
@@ -61,6 +63,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
     }),
 
     PrismaModule,
+    AuthModule,
     AssistantModule,
     KnowledgeModule,
   ],
@@ -73,6 +76,16 @@ import { PrismaModule } from './prisma/prisma.module.js';
     // 用自己那个按 IP 统一计数的版本（见 ip-throttler.guard.ts）：
     // 库默认是按端点各算一份额度，那样两个模型端点加起来就是文档里那个数的两倍。
     { provide: APP_GUARD, useClass: IpThrottlerGuard },
+
+    /**
+     * 登录守卫。顺序在限流之后：先按 IP 挡掉刷量的，再去查库解令牌 ——
+     * 被限流挡掉的请求不该花一次数据库查询。
+     *
+     * 默认**所有端点都要登录**，公开的三个用 `@Public()` 显式开口
+     * （登录、探活、退出）。这个默认值是有意选的：
+     * 忘了开口 → 新端点 401，立刻能发现；反过来忘了保护 → 安静地敞着。
+     */
+    { provide: APP_GUARD, useClass: SessionGuard },
   ],
 })
 export class AppModule {}

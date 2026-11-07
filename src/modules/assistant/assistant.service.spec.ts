@@ -25,6 +25,7 @@ import type {
   RequestMeasurement,
 } from './assistant-metrics.service.js';
 import type { AssistantStreamEvent } from './ask.types.js';
+import type { Viewer } from './viewer.js';
 
 /**
  * Agent 循环的单测。
@@ -62,6 +63,8 @@ const APPROVAL = {
   code: 'BX-2026-0003',
   status: 'REJECTED',
   decidedAt: new Date('2026-04-05T00:00:00Z'),
+  approverName: '王经理',
+  approvalNote: null,
   rejectReason: '招待费超出标准',
 };
 
@@ -211,6 +214,13 @@ function scriptedLlm(script: Array<LlmCompletion | Error>): LlmProvider & {
 
 const DTO = { code: 'BX-2026-0003', question: '这张单子为什么被驳回了？' };
 
+/**
+ * 单测里统一用一个「审计」视角：它看得见全部（含草稿），
+ * 于是这些用例测的仍然是 Agent 循环本身，不是可见性 —— 可见性有自己的单测和 e2e。
+ * 归属判定认 id，所以这里必须给一个，不能只写姓名。
+ */
+const VIEWER: Viewer = { id: 'u-zhengshi', name: '郑十', role: 'auditor' };
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -234,7 +244,7 @@ describe('AssistantService（Agent 循环）', () => {
       },
     ]);
 
-    const result = await makeService(makePrisma(), llm).ask(DTO);
+    const result = await makeService(makePrisma(), llm).ask(DTO, VIEWER);
 
     expect(result.conclusion).toContain('招待费超出标准');
     // trace 是服务端根据**实际执行**生成的，不是模型说的。
@@ -281,7 +291,7 @@ describe('AssistantService（Agent 循环）', () => {
           insufficient: false,
         },
       ],
-    });
+    }, VIEWER);
 
     const [first] = llm.calls;
     // 只有两条消息：历史是**数据**，不是被还原出来的对话轮次。
@@ -322,7 +332,7 @@ describe('AssistantService（Agent 循环）', () => {
           insufficient: false,
         },
       ],
-    });
+    }, VIEWER);
 
     // 历史是**上下文**，不是**依据**。本轮没查过任何字段，所以一个都不能引用 ——
     // 否则模型可以靠「上一轮查过」把没过检的证据洗进这一轮。
@@ -351,7 +361,7 @@ describe('AssistantService（Agent 循环）', () => {
     ]);
 
     const prisma = makePrisma();
-    const result = await makeService(prisma, llm).ask(DTO);
+    const result = await makeService(prisma, llm).ask(DTO, VIEWER);
 
     expect(result.trace).toEqual([{ tool: 'read_any_expense', ok: false }]);
     // 除了 prepare() 的那一次，不应该再碰数据库 —— 未知工具不能被执行。
@@ -375,7 +385,7 @@ describe('AssistantService（Agent 循环）', () => {
 
     // prepare() 成功、工具查询失败。
     const prisma = makePrisma({ failTools: true });
-    const result = await makeService(prisma, llm).ask(DTO);
+    const result = await makeService(prisma, llm).ask(DTO, VIEWER);
 
     expect(result.trace).toEqual([{ tool: 'get_expense_summary', ok: false }]);
     expect(llm.calls[1].at(-1)).toMatchObject({ role: 'tool', toolCallId: 'call_1' });
@@ -387,7 +397,7 @@ describe('AssistantService（Agent 循环）', () => {
       makePrisma({ failPrepare: prismaError('P1001') }),
       llm,
     )
-      .ask(DTO)
+      .ask(DTO, VIEWER)
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ServiceUnavailableException);
@@ -407,7 +417,7 @@ describe('AssistantService（Agent 循环）', () => {
       makePrisma({ failTools: prismaError('P1001') }),
       llm,
     );
-    const error = await service.ask(DTO).catch((caught: unknown) => caught);
+    const error = await service.ask(DTO, VIEWER).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ServiceUnavailableException);
     expect((error as Error).message).toBe('数据库暂时不可用，请稍后重试');
@@ -437,7 +447,7 @@ describe('AssistantService（Agent 循环）', () => {
     const result = await makeService(
       makePrisma({ failTools: prismaError('P2002') }),
       llm,
-    ).ask(DTO);
+    ).ask(DTO, VIEWER);
 
     expect(result.insufficient).toBe(true);
     expect(result.trace).toEqual([{ tool: 'get_expense_summary', ok: false }]);
@@ -460,7 +470,7 @@ describe('AssistantService（Agent 循环）', () => {
       },
     ]);
 
-    const result = await makeService(makePrisma(), llm).ask(DTO);
+    const result = await makeService(makePrisma(), llm).ask(DTO, VIEWER);
 
     expect(result.evidence).toEqual(['status', 'rejectReason']);
     expect(
@@ -478,7 +488,7 @@ describe('AssistantService（Agent 循环）', () => {
     );
 
     const error = await makeService(makePrisma(), llm)
-      .ask(DTO)
+      .ask(DTO, VIEWER)
       .then(() => {
         throw new Error('这个请求本该失败，却成功了');
       })
@@ -492,7 +502,7 @@ describe('AssistantService（Agent 循环）', () => {
   it('模型调用抛错 → 502，而不是 500（500 会让上游去翻代码）', async () => {
     const llm = scriptedLlm([new Error('厂商 500')]);
 
-    await expect(makeService(makePrisma(), llm).ask(DTO)).rejects.toBeInstanceOf(
+    await expect(makeService(makePrisma(), llm).ask(DTO, VIEWER)).rejects.toBeInstanceOf(
       BadGatewayException,
     );
   });
@@ -518,7 +528,7 @@ describe('AssistantService（Agent 循环）', () => {
     ]);
 
     const service = makeService(makePrisma(), llm);
-    const result = await service.ask(DTO);
+    const result = await service.ask(DTO, VIEWER);
 
     expect(result.metrics).toMatchObject({
       modelCalls: 2,
@@ -536,7 +546,7 @@ describe('AssistantService（Agent 循环）', () => {
     // 失败那条路也要有打点。只统计成功请求的话，「变慢了」会被超时请求掩盖 ——
     // 慢到失败的那些恰好不在分布里。
     const failing = makeService(makePrisma(), scriptedLlm([new Error('厂商 500')]));
-    await expect(failing.ask(DTO)).rejects.toBeInstanceOf(BadGatewayException);
+    await expect(failing.ask(DTO, VIEWER)).rejects.toBeInstanceOf(BadGatewayException);
     expect(failing.measurements).toEqual([
       expect.objectContaining({ outcome: 'error', modelCalls: 0 }),
     ]);
@@ -562,7 +572,7 @@ describe('AssistantService（Agent 循环）', () => {
       },
     ]);
 
-    const result = await makeService(makePrisma(), llm).ask(DTO);
+    const result = await makeService(makePrisma(), llm).ask(DTO, VIEWER);
 
     // 只拿 200/10 去算成本会得到一个偏低、又看不出问题的数字 —— 这是最危险的一类错。
     expect(result.metrics.usage).toBeNull();
@@ -578,7 +588,7 @@ describe('AssistantService（Agent 循环）', () => {
       },
     ]);
 
-    const result = await makeService(makePrisma(), llm).ask(DTO);
+    const result = await makeService(makePrisma(), llm).ask(DTO, VIEWER);
 
     expect(result.metrics.toolMs).toBeGreaterThanOrEqual(0);
     expect(result.metrics.elapsedMs).toBeGreaterThanOrEqual(result.metrics.toolMs);
@@ -620,7 +630,7 @@ describe('AssistantService.streamAnswer（带工具的流）', () => {
     service: AssistantService,
     session?: AgentSession,
   ): Promise<AssistantStreamEvent[]> {
-    const prepared = session ?? (await service.prepare(DTO));
+    const prepared = session ?? (await service.prepare(DTO, VIEWER));
     const out: AssistantStreamEvent[] = [];
     for await (const event of service.streamAnswer(prepared)) out.push(event);
     return out;
@@ -742,7 +752,7 @@ describe('AssistantService（请求预算）', () => {
     process.env.ASK_TIMEOUT_MS = '30';
     const service = makeService(makePrisma(), hangingLlm());
 
-    const error = await service.ask(DTO).catch((caught: unknown) => caught);
+    const error = await service.ask(DTO, VIEWER).catch((caught: unknown) => caught);
 
     // 504 而不是 502：错在「这次太慢」，不是「厂商坏了」。
     // 两者的排查方向完全不同，混成一个码等于把这条线索丢掉。
@@ -757,7 +767,7 @@ describe('AssistantService（请求预算）', () => {
     process.env.ASK_TIMEOUT_MS = '30';
     const service = makeService(makePrisma(), hangingLlm());
 
-    const prepared = await service.prepare(DTO);
+    const prepared = await service.prepare(DTO, VIEWER);
     const events: AssistantStreamEvent[] = [];
     for await (const event of service.streamAnswer(prepared)) events.push(event);
 
@@ -775,7 +785,7 @@ describe('AssistantService（请求预算）', () => {
   it('调用方自己取消不会被说成超时', async () => {
     process.env.ASK_TIMEOUT_MS = '5000';
     const service = makeService(makePrisma(), hangingLlm());
-    const prepared = await service.prepare(DTO);
+    const prepared = await service.prepare(DTO, VIEWER);
 
     const caller = new AbortController();
     const events: AssistantStreamEvent[] = [];
@@ -810,7 +820,7 @@ describe('AssistantService（流式：开跑之前就断开）', () => {
     const consume = vi.fn(() => true);
     const service = makeService(makePrisma(), llm, { consume });
 
-    const prepared = await service.prepare(DTO);
+    const prepared = await service.prepare(DTO, VIEWER);
     const caller = new AbortController();
     caller.abort();
 
@@ -841,7 +851,7 @@ describe('AssistantService（流式：开跑之前就断开）', () => {
       consume,
     });
 
-    const prepared = await service.prepare(DTO);
+    const prepared = await service.prepare(DTO, VIEWER);
     const events: AssistantStreamEvent[] = [];
     for await (const event of service.streamAnswer(prepared)) {
       events.push(event);
@@ -865,7 +875,7 @@ describe('AssistantService（日额度）', () => {
     const llm = scriptedLlm([]);
     const service = makeService(makePrisma(), llm, { consume: () => false });
 
-    const error = await service.ask(DTO).catch((caught: unknown) => caught);
+    const error = await service.ask(DTO, VIEWER).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(HttpException);
     expect((error as HttpException).getStatus()).toBe(429);
@@ -885,7 +895,7 @@ describe('AssistantService（日额度）', () => {
     const llm = streamingLlm([]);
     const service = makeService(makePrisma(), llm, { consume: () => false });
 
-    const prepared = await service.prepare(DTO);
+    const prepared = await service.prepare(DTO, VIEWER);
     const events: AssistantStreamEvent[] = [];
     for await (const event of service.streamAnswer(prepared)) {
       events.push(event);
@@ -919,7 +929,7 @@ describe('AssistantService（非流式：客户端断开）', () => {
     const service = makeService(makePrisma(), hangingLlm());
 
     const caller = new AbortController();
-    const pending = service.ask(DTO, caller.signal);
+    const pending = service.ask(DTO, VIEWER, caller.signal);
     // 等模型调用真的挂上去，否则测到的只是「一开始就是 aborted」。
     await new Promise((resolve) => setTimeout(resolve, 20));
     caller.abort();
@@ -953,7 +963,7 @@ describe('AssistantService（非流式：客户端断开）', () => {
     };
     const service = makeService(makePrisma(), llm);
 
-    const result = await service.ask(DTO);
+    const result = await service.ask(DTO, VIEWER);
 
     expect(result).toMatchObject({
       conclusion: '已通过。',

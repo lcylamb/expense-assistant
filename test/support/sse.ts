@@ -4,7 +4,7 @@ import type { AskResult } from '../../src/modules/assistant/ask.types.js';
  * 把 SSE 响应体切成帧。
  *
  * ⚠️ 这份解析**必须**和服务端写帧的方式对齐（`assistant.controller.ts` 里的 `writeEvent`）。
- * 现在一共四处要读同一套规则：服务端写、这个测试辅助读、`public/index.html` 读、
+ * 现在一共四处要读同一套规则：服务端写、这个测试辅助读、`web/src/api/client.ts` 读、
  * `scripts/ask-stream-probe.mjs` 读。任何一处偷偷改了分帧规则，另外三处都会读错，
  * 而症状是「页面上少几个字」这种很难定位的样子。
  *

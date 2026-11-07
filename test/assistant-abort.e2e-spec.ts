@@ -4,6 +4,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module.js';
 import { applyGlobalSetup } from '../src/app-setup.js';
 import type { MetricsSnapshot } from '../src/modules/assistant/assistant-metrics.service.js';
+import { loginCookieAt } from './support/session.js';
 
 /**
  * 客户端断开时的行为。
@@ -25,6 +26,7 @@ import type { MetricsSnapshot } from '../src/modules/assistant/assistant-metrics
 describe('客户端断开 (e2e)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
+  let cookie: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -37,6 +39,7 @@ describe('客户端断开 (e2e)', () => {
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    cookie = await loginCookieAt(baseUrl);
   });
 
   afterAll(async () => {
@@ -44,7 +47,7 @@ describe('客户端断开 (e2e)', () => {
   });
 
   const metrics = async (): Promise<MetricsSnapshot> =>
-    (await fetch(`${baseUrl}/assistant/metrics`)).json() as Promise<MetricsSnapshot>;
+    (await fetch(`${baseUrl}/assistant/metrics`, { headers: { cookie } })).json() as Promise<MetricsSnapshot>;
 
   /** 打点是在生成器 finally 里写的，断开之后要给它一点时间。 */
   async function waitFor(
@@ -69,7 +72,7 @@ describe('客户端断开 (e2e)', () => {
 
     const response = await fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         code: 'BX-2026-0003',
         question: '这张单子为什么被驳回了？',

@@ -50,8 +50,16 @@ docker compose down
 - `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`
 - `LLM_DAILY_LIMIT`（公网部署建议设置）
 - `TRUST_PROXY=1`（Render 位于反向代理之后）
+- `SESSION_SECRET`（≥32 字符，**不能省**，见下）
+- `KNOWLEDGE_ENABLED=false`（Render 免费档必须关，见下）
 
 密钥只应出现在本地 `.env` 与部署平台的 secret 中。源码、`.env.example` 和镜像中都不包含密钥；错误处理只读取厂商响应体，不回显请求头。
+
+**`SESSION_SECRET` 不能省。** 不配时服务每次启动随机生成一把密钥 —— Render 免费实例休眠再唤醒就是一次重启，访客的登录态每次清零，多实例之间也互不认账。生成：`openssl rand -base64 48`。
+
+**`KNOWLEDGE_ENABLED=false` 在 Render 免费档是必须的。** 知识库模块的本地 embedding 模型会把进程 RSS 推到约 714MB，而免费实例只有 512MB —— 不关就是启动即被 OOM 杀掉。懒加载保证关掉之后不占任何内存。
+
+**改过 schema 就要重跑一次迁移。** 托管平台不执行仓库里的迁移，部署本身不会帮你改表。代码里 select 了新字段而库里没有这列，工具会在运行时炸（`column does not exist`），而不是启动时报错 —— 页面能打开，一问就失败。
 
 ## 持续集成
 
@@ -61,7 +69,7 @@ docker compose down
 2. `tsc --noEmit`
 3. `build`
 4. 单元测试
-5. 端到端测试（含 23 条评测）
+5. 端到端测试（含 24 条评测）
 
 数据库由 GitHub Actions 的 service 容器提供，每次从零执行 `migrate deploy` 与 seed。评测中的期望值大多从数据计算得出，流水线与本机必须使用同一份数据，否则对错表没有意义。
 
@@ -82,6 +90,8 @@ CI 只运行 mock。真实模型评测在本地手动执行：其输出随模型
 |---|---|---|
 | `DATABASE_URL` | — | PostgreSQL 连接串 |
 | `PORT` | `3100` | 监听端口 |
+| `SESSION_SECRET` | 随机生成 | 会话签名密钥，≥32 字符；不配则重启后全员掉线 |
+| `COOKIE_SECURE` | 按 `NODE_ENV` | 覆盖 cookie 的 `Secure` 标记（TLS 在应用前终止时用） |
 | `LLM_PROVIDER` | `mock` | `mock`（规则表）或 `openai`（OpenAI 兼容协议） |
 | `LLM_API_KEY` | — | `openai` 模式必填 |
 | `LLM_BASE_URL` | — | `openai` 模式必填，例如 `https://api.deepseek.com/v1` |
@@ -101,6 +111,8 @@ CI 只运行 mock。真实模型评测在本地手动执行：其输出随模型
 | `LLM_PRICE_CURRENCY` | `CNY` | 成本显示币种 |
 | `MOCK_MISBEHAVE` | 空 | `unknown-field` 时故意引用不存在的字段，用于验证防线 |
 | `MOCK_CHUNK_DELAY_MS` | `25` | mock 流式输出的块间延迟 |
+| `KNOWLEDGE_ENABLED` | `true` | 知识库问答开关；内存吃紧的机器上设为 `false` |
+| `HF_MIRROR` | 未设置 | HuggingFace 镜像站（hf.co 直连超时时用） |
 
 `openai` 模式下缺少任一必填项，服务会拒绝启动，避免「以为接了真实模型、实际在跑假数据」。
 

@@ -10,6 +10,7 @@ import {
   type LlmStream,
 } from '../src/modules/llm/llm.types.js';
 import { countHeartbeats, parseSse } from './support/sse.js';
+import { loginCookie } from './support/session.js';
 
 /**
  * 空闲时的心跳。
@@ -56,6 +57,7 @@ const body = { code: 'BX-2026-0003', question: '这张单子为什么被驳回�
 
 describe('流式心跳 (e2e)', () => {
   let app: NestExpressApplication;
+  let cookie: string;
   let original: string | undefined;
 
   beforeAll(async () => {
@@ -72,6 +74,7 @@ describe('流式心跳 (e2e)', () => {
     app = moduleFixture.createNestApplication<NestExpressApplication>();
     applyGlobalSetup(app);
     await app.init();
+    cookie = await loginCookie(app);
   });
 
   afterAll(async () => {
@@ -82,7 +85,7 @@ describe('流式心跳 (e2e)', () => {
 
   it('空档里发注释帧，并且出现在第一个 delta 之前', async () => {
     const response = await request(app.getHttpServer())
-      .post('/assistant/askStream')
+      .post('/assistant/askStream').set('Cookie', cookie)
       .send(body)
       .expect(200);
 
@@ -105,7 +108,7 @@ describe('流式心跳 (e2e)', () => {
 
     try {
       const response = await request(app.getHttpServer())
-        .post('/assistant/askStream')
+        .post('/assistant/askStream').set('Cookie', cookie)
         .send(body)
         .expect(200);
 

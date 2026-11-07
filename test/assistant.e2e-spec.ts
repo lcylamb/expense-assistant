@@ -6,6 +6,7 @@ import { applyGlobalSetup } from '../src/app-setup.js';
 import type { AskResult } from '../src/modules/assistant/ask.types.js';
 import type { MetricsSnapshot } from '../src/modules/assistant/assistant-metrics.service.js';
 import { asResult, parseSse } from './support/sse.js';
+import { loginCookie } from './support/session.js';
 
 /**
  * `/assistant/ask` 的端到端测试。
@@ -13,6 +14,7 @@ import { asResult, parseSse } from './support/sse.js';
  * 需要数据库在跑且已经 seed 过（`npm run db:up && npm run db:seed`）。
  * 用的是 seed 里那两条**刻意设计**的记录：
  *   · BX-2026-0003  已驳回、有驳回原因  → 能答
+ *   · BX-2026-0001  已打款、有审批意见  → 能答出意见正文
  *   · BX-2026-0005  草稿、没有审批意见  → 必须答「信息不足」
  *
  * 注意这里断言的是**语义**（该不该 insufficient、依据里有没有那个字段），
@@ -20,6 +22,7 @@ import { asResult, parseSse } from './support/sse.js';
  */
 describe('AssistantController (e2e)', () => {
   let app: NestExpressApplication;
+  let cookie: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -29,6 +32,7 @@ describe('AssistantController (e2e)', () => {
     app = moduleFixture.createNestApplication<NestExpressApplication>();
     applyGlobalSetup(app);
     await app.init();
+    cookie = await loginCookie(app);
   });
 
   afterAll(async () => {
@@ -36,7 +40,7 @@ describe('AssistantController (e2e)', () => {
   });
 
   const ask = (body: object) =>
-    request(app.getHttpServer()).post('/assistant/ask').send(body);
+    request(app.getHttpServer()).post('/assistant/ask').set('Cookie', cookie).send(body);
 
   it('问已驳回的单子，答得出原因、依据里有 rejectReason', async () => {
     const response = await ask({
@@ -66,6 +70,20 @@ describe('AssistantController (e2e)', () => {
     expect(result.evidence).not.toContain('rejectReason');
     expect(result.evidence).not.toContain('decidedAt');
     // 答「信息不足」也必须真的去查过，而不是不查就下结论。
+    expect(result.trace).toEqual([{ tool: 'get_approval_record', ok: true }]);
+  });
+
+  it('问已打款的单子，答得出审批意见本身，不只是状态', async () => {
+    const response = await ask({
+      code: 'BX-2026-0001',
+      question: '审批意见是什么？',
+    }).expect(200);
+
+    const result = response.body as AskResult;
+    expect(result.insufficient).toBe(false);
+    // 只答「已打款」等于没答 —— 意见的正文必须出来。
+    expect(result.conclusion).toContain('按差旅标准报销');
+    expect(result.evidence).toContain('approvalNote');
     expect(result.trace).toEqual([{ tool: 'get_approval_record', ok: true }]);
   });
 
@@ -161,7 +179,7 @@ describe('AssistantController (e2e)', () => {
 
   describe('POST /assistant/askStream', () => {
     const askStream = (body: object) =>
-      request(app.getHttpServer()).post('/assistant/askStream').send(body);
+      request(app.getHttpServer()).post('/assistant/askStream').set('Cookie', cookie).send(body);
 
     it('两条端点给出**完全相同**的结论', async () => {
       // 这条是整个流式改造里最该有的一条断言：两条路必须共用同一份 prompt
@@ -244,7 +262,7 @@ describe('AssistantController (e2e)', () => {
 
   describe('GET /assistant/metrics', () => {
     const metrics = () =>
-      request(app.getHttpServer()).get('/assistant/metrics').expect(200);
+      request(app.getHttpServer()).get('/assistant/metrics').set('Cookie', cookie).expect(200);
 
     it('两条端点各打一次，计数和延迟都跟着动', async () => {
       // 用「前后差」而不是绝对值：这个文件里前面的用例已经打过一些请求，
@@ -253,7 +271,7 @@ describe('AssistantController (e2e)', () => {
 
       await ask({ code: 'BX-2026-0003', question: '这张单子为什么被驳回了？' }).expect(200);
       await request(app.getHttpServer())
-        .post('/assistant/askStream')
+        .post('/assistant/askStream').set('Cookie', cookie)
         .send({ code: 'BX-2026-0003', question: '这张单子为什么被驳回了？' })
         .expect(200);
 

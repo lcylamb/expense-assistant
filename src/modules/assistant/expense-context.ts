@@ -90,6 +90,8 @@ interface ApprovalFields {
   code: string;
   status: string;
   decidedAt: Date | null;
+  approverName: string | null;
+  approvalNote: string | null;
   rejectReason: string | null;
 }
 
@@ -101,6 +103,8 @@ export function buildApprovalRecord(
     status: expense.status,
   };
   if (expense.decidedAt) record.decidedAt = expense.decidedAt.toISOString();
+  if (expense.approverName) record.approverName = expense.approverName;
+  if (expense.approvalNote) record.approvalNote = expense.approvalNote;
   if (expense.rejectReason) record.rejectReason = expense.rejectReason;
   return record;
 }
@@ -153,6 +157,8 @@ export function buildExpenseContext(expense: ExpenseWithItems): ExpenseContext {
   };
 
   if (expense.decidedAt) record.decidedAt = expense.decidedAt.toISOString();
+  if (expense.approverName) record.approverName = expense.approverName;
+  if (expense.approvalNote) record.approvalNote = expense.approvalNote;
   if (expense.rejectReason) record.rejectReason = expense.rejectReason;
 
   return { record, availableFields: fieldsOf(record) };

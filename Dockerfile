@@ -44,6 +44,10 @@ WORKDIR /app
 COPY nest-cli.json tsconfig.json tsconfig.build.json prisma.config.ts ./
 COPY prisma ./prisma
 COPY src ./src
+# 前端源码也在这一层构建：`npm run build` 第一步是 `vite build`，
+# 把 web/ 打包进 public/，然后 nest build 才编译后端。少了这行，
+# 镜像里根本没有 public/ 可言 —— 页面 404，API 一切正常，最难发现。
+COPY web ./web
 
 # generate 必须在 build **之前**，因为：
 #   · Prisma 7 把 client 生成到 src/generated/prisma（见 schema.prisma 的注释），是 .ts 文件
@@ -92,10 +96,10 @@ ENV PORT=3100
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 
-# public/ 直接取自构建上下文，**不经 build 阶段**：
-# 它是纯静态的，`nest build` 一个字都不改它。绕一趟 build 只会让
-# 「改一行 HTML 要等整个编译链」—— 而且 build 那一层根本没 COPY 它。
-COPY --chown=node:node public ./public
+# public/ 从 build 阶段拿，而不是构建上下文：它是 vite 的产物，
+# 和 dist 同一个生命周期。从上下文拷的话，就得要求「先在本地跑过 npm run build
+# 才能 docker build」—— CI 的 checkout 里 public/ 根本不存在（gitignore 了）。
+COPY --from=build --chown=node:node /app/public ./public
 
 COPY --chown=node:node package.json ./
 

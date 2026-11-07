@@ -18,10 +18,13 @@ function makeExpense(overrides: Partial<ExpenseWithItems> = {}): ExpenseWithItem
     title: '客户答谢晚宴',
     applicant: '王五',
     department: '市场部',
+    applicantId: 'u-wangwu',
     category: ExpenseCategory.ENTERTAIN,
     amount: new Prisma.Decimal('2766.00'),
     status: ExpenseStatus.REJECTED,
     rejectReason: '招待费超出部门月度预算，且缺少参与人员清单',
+    approverName: '王经理',
+    approvalNote: null,
     submittedAt: new Date('2026-03-15T10:40:00.000Z'),
     decidedAt: new Date('2026-03-18T03:10:00.000Z'),
     items: [
@@ -94,6 +97,23 @@ describe('buildExpenseContext', () => {
       );
       expect(record).not.toHaveProperty('decidedAt');
       expect(availableFields).not.toContain('decidedAt');
+    });
+
+    // 通过 / 打款的单没有驳回原因，但有审批人和审批意见 —— 这两者不能互相顶替，
+    // 否则「问审批意见」在已通过的单上永远只能答「数据里没有」。
+    it('已通过的单有审批人和审批意见，没有驳回原因', () => {
+      const { record, availableFields } = buildExpenseContext(
+        makeExpense({
+          status: ExpenseStatus.PAID,
+          rejectReason: null,
+          approvalNote: '按差旅标准据实报销，同意。',
+        }),
+      );
+      expect(record.approverName).toBe('王经理');
+      expect(record.approvalNote).toBe('按差旅标准据实报销，同意。');
+      expect(availableFields).toContain('approverName');
+      expect(availableFields).toContain('approvalNote');
+      expect(availableFields).not.toContain('rejectReason');
     });
 
     it('明细的 note 为 null 时同上', () => {

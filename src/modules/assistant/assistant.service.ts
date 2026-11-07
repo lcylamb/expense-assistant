@@ -25,6 +25,7 @@ import type {
   AskMetrics,
   AskResult,
   AssistantStreamEvent,
+  ExpenseListResult,
   HistoryTurn,
   ParsedAnswer,
 } from './ask.types.js';
@@ -35,6 +36,10 @@ import {
 import { parseAnswer } from './parse-answer.js';
 import { partialConclusion } from './stream-parse.js';
 import { TOOL_SPECS, findTool, type ToolOutcome } from './tools.js';
+import { visibilityWhere, visibleToViewer } from './viewer.js';
+import type { Viewer } from './viewer.js';
+import type { ListExpensesDto } from './list-expenses.dto.js';
+import { ExpenseCategory, ExpenseStatus, type Prisma } from '../../generated/prisma/client.js';
 
 /**
  * 系统提示词。
@@ -173,6 +178,8 @@ function askTimeoutMs(): number {
 export interface AgentSession {
   code: string;
   expenseId: string;
+  /** 请求方身份。来自登录态，不是请求体（见 viewer.ts）。 */
+  viewer: Viewer;
   messages: LlmMessage[];
   fields: Set<string>;
   /** 请求开始时刻。耗时从这里算，包含 prepare() 那一次单号查询。 */
@@ -212,13 +219,18 @@ export class AssistantService {
    */
   // 两个重载：不带信号时不可能返回 null（没人会取消），带信号时才可能。
   // 写成一个联合类型的话，所有不传信号的调用方都得去判一次永远不成立的空值。
-  async ask(dto: AskDto): Promise<AskResult>;
-  async ask(dto: AskDto, callerSignal: AbortSignal): Promise<AskResult | null>;
+  async ask(dto: AskDto, viewer: Viewer): Promise<AskResult>;
   async ask(
     dto: AskDto,
+    viewer: Viewer,
+    callerSignal: AbortSignal,
+  ): Promise<AskResult | null>;
+  async ask(
+    dto: AskDto,
+    viewer: Viewer,
     callerSignal?: AbortSignal,
   ): Promise<AskResult | null> {
-    const session = await this.prepare(dto);
+    const session = await this.prepare(dto, viewer);
     const budget = this.budget(callerSignal);
 
     try {
@@ -578,7 +590,7 @@ export class AssistantService {
    * 这也顺带把「单号存不存在」和「模型要查什么」两件事分开了：
    * 前者是请求合法性，必须在流开始前判；后者是模型的决定，发生在流中间。
    */
-  async prepare(dto: AskDto): Promise<AgentSession> {
+  async prepare(dto: AskDto, viewer: Viewer): Promise<AgentSession> {
     const startedAt = Date.now();
 
     // 库连不上和「这张单子不存在」必须分得开：前者是基础设施问题（503，可重试），
@@ -586,11 +598,17 @@ export class AssistantService {
     // 而 500 的语义是「服务端有 bug」，运维会去翻这段代码，方向从一开始就错了。
     // 启动时已经查过一次库（见 PrismaService.onModuleInit），所以这里出现
     // 「连不上」只可能是**起来之后**库挂了。
-    let expense: { id: string } | null;
+    let expense: {
+      id: string;
+      applicantId: string;
+      status: ExpenseStatus;
+    } | null;
     try {
       expense = await this.prisma.expense.findUnique({
         where: { code: dto.code },
-        select: { id: true },
+        // 只取可见性判断要用的两列。`applicant`（姓名快照）**不查** ——
+        // 它不是归属键，查出来只会诱使后续代码拿它做权限判断。
+        select: { id: true, applicantId: true, status: true },
       });
     } catch (error) {
       if (!isDatabaseUnavailable(error)) throw error;
@@ -605,9 +623,20 @@ export class AssistantService {
       throw new NotFoundException(`没有找到编号为 ${dto.code} 的报销单`);
     }
 
+    // 可见性检查与「不存在」返回**同一个错误**：无权的单子和不存在的单子
+    // 在外部无法区分 —— 单号可枚举（BX-2026-0001…），403 等于在替人确认
+    // 「这张单子存在，只是你看不见」。防枚举比提示友好重要。
+    if (!visibleToViewer(expense, viewer)) {
+      this.logger.warn(
+        `越权拦截：${viewer.role} ${viewer.name} 查询 ${dto.code}`,
+      );
+      throw new NotFoundException(`没有找到编号为 ${dto.code} 的报销单`);
+    }
+
     return {
       code: dto.code,
       expenseId: expense.id,
+      viewer,
       messages: buildMessages(dto.code, dto.question, dto.history),
       fields: new Set<string>(),
       startedAt,
@@ -616,6 +645,92 @@ export class AssistantService {
       usage: null,
       usageMissing: false,
     };
+  }
+
+  /**
+   * 单据列表 + 概览统计（GET /assistant/expenses）。
+   *
+   * ── 为什么列表从服务端来 ──
+   * 此前前端硬编码了一份单子清单（自己注释里就写着「真产品应当来自列表接口」）。
+   * 有了身份之后这份硬编码直接错误：它假设人人可见全部 10 张。
+   * 列表收归服务端后，「你能看到哪些单」只有**一个**出处 —— 可见性规则。
+   *
+   * ── 分类筛选为什么在查询参数里 ──
+   * 服务端按条件查（真实产品的形状），前端拿到全量后本地过滤（10 张数据，
+   * 来回请求只为筛一下太重）。两条路都留着：接口是完整的，页面是顺手的。
+   */
+  async listExpenses(
+    query: ListExpensesDto,
+    viewer: Viewer,
+  ): Promise<ExpenseListResult> {
+    // audit 的 where 是 null —— 展开 null 是合法的（得到空对象），不需要兜底成 {}。
+    const where: Prisma.ExpenseWhereInput = {
+      ...(visibilityWhere(viewer)),
+      ...(query.category ? { category: query.category as ExpenseCategory } : {}),
+    };
+
+    const rows = await this.withDbUnavailableGuard(async () =>
+      this.prisma.expense.findMany({
+        where,
+        orderBy: [{ submittedAt: 'desc' }, { code: 'asc' }],
+        select: {
+          code: true,
+          title: true,
+          applicant: true,
+          department: true,
+          category: true,
+          status: true,
+          amount: true,
+          submittedAt: true,
+        },
+      }),
+    );
+
+    const byStatus: Record<string, number> = {};
+    let totalCents = 0;
+    let rejectedCount = 0;
+    const expenses = rows.map((row) => {
+      byStatus[row.status] = (byStatus[row.status] ?? 0) + 1;
+      // 金额按「分」累加再转回十进制字符串，和 seed 同一个纪律：浮点不碰钱。
+      totalCents += Math.round(Number(row.amount) * 100);
+      if (row.status === ExpenseStatus.REJECTED) rejectedCount += 1;
+      return {
+        code: row.code,
+        title: row.title,
+        applicant: row.applicant,
+        department: row.department,
+        category: row.category,
+        status: row.status,
+        amount: row.amount.toString(),
+        submittedAt: row.submittedAt.toISOString(),
+      };
+    });
+
+    return {
+      // 只回姓名和角色，不回 user id —— 前端拿它显示「当前是谁」，
+      // 不需要、也不该拿到权限判定用的那个主键。
+      viewer: { name: viewer.name, role: viewer.role },
+      expenses,
+      summary: {
+        count: expenses.length,
+        byStatus,
+        totalAmount: (totalCents / 100).toFixed(2),
+        rejectedCount,
+      },
+    };
+  }
+
+  /** 把「库连不上」从普通异常里分出来，映射成 503 —— 语义和 prepare() 保持一致。 */
+  private async withDbUnavailableGuard<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!isDatabaseUnavailable(error)) throw error;
+      this.logger.error(
+        `查询报销单列表失败，数据库不可用：${describeError(error)}`,
+      );
+      throw new ServiceUnavailableException(DB_UNAVAILABLE_MESSAGE);
+    }
   }
 
   private assertQuota(session: AgentSession): void {
@@ -663,6 +778,7 @@ export class AssistantService {
           outcome = await tool.run({
             expenseId: session.expenseId,
             prisma: this.prisma,
+            viewer: session.viewer,
           });
         } catch (error) {
           // 库连不上时**不能**降级成「工具失败，请说明信息不足」。

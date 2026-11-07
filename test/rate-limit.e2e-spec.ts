@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { applyGlobalSetup } from '../src/app-setup.js';
 import type { MetricsSnapshot } from '../src/modules/assistant/assistant-metrics.service.js';
+import { sessionCookieDirect } from './support/session.js';
 
 /**
  * 限流到底限的是什么。
@@ -25,6 +26,7 @@ const LIMIT = 3;
 
 describe('限流 (e2e)', () => {
   let app: NestExpressApplication;
+  let cookie: string;
 
   const body = {
     code: 'BX-2026-0003',
@@ -32,14 +34,14 @@ describe('限流 (e2e)', () => {
   };
 
   const ask = () =>
-    request(app.getHttpServer()).post('/assistant/ask').send(body);
+    request(app.getHttpServer()).post('/assistant/ask').set('Cookie', cookie).send(body);
 
   const askStream = () =>
-    request(app.getHttpServer()).post('/assistant/askStream').send(body);
+    request(app.getHttpServer()).post('/assistant/askStream').set('Cookie', cookie).send(body);
 
   const metrics = async (): Promise<MetricsSnapshot> => {
     const response = await request(app.getHttpServer())
-      .get('/assistant/metrics')
+      .get('/assistant/metrics').set('Cookie', cookie)
       .expect(200);
     return response.body as MetricsSnapshot;
   };
@@ -56,6 +58,7 @@ describe('限流 (e2e)', () => {
     app = moduleFixture.createNestApplication<NestExpressApplication>();
     applyGlobalSetup(app);
     await app.init();
+    cookie = await sessionCookieDirect(app);
   });
 
   afterAll(async () => {

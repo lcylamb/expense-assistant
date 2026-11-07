@@ -11,6 +11,7 @@ import type {
   LlmStream,
 } from '../src/modules/llm/llm.types.js';
 import { LLM_PROVIDER } from '../src/modules/llm/llm.types.js';
+import { loginCookieAt } from './support/session.js';
 
 /**
  * 流式端点：**取数阶段**的客户端断开。
@@ -43,6 +44,7 @@ class CountingProvider implements LlmProvider {
 describe('流式：取数阶段客户端断开 (e2e)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
+  let cookie: string;
   const stub = new CountingProvider();
 
   beforeAll(async () => {
@@ -58,6 +60,7 @@ describe('流式：取数阶段客户端断开 (e2e)', () => {
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    cookie = await loginCookieAt(baseUrl);
   });
 
   afterEach(() => {
@@ -70,7 +73,7 @@ describe('流式：取数阶段客户端断开 (e2e)', () => {
 
   const metrics = async (): Promise<MetricsSnapshot> =>
     (
-      await fetch(`${baseUrl}/assistant/metrics`)
+      await fetch(`${baseUrl}/assistant/metrics`, { headers: { cookie } })
     ).json() as Promise<MetricsSnapshot>;
 
   it('取数期间断开：不写流、不开模型、不花额度，也不记成一次失败', async () => {
@@ -85,10 +88,10 @@ describe('流式：取数阶段客户端断开 (e2e)', () => {
     // 把查库拖长，给客户端留出「就在这一小段里走掉」的窗口。
     // 拖的是真正的 `prepare()`，不是另写一个假实现 —— 要测的正是 controller
     // 在**真实的取数流程**中间能不能接住断开。
-    vi.spyOn(assistant, 'prepare').mockImplementation(async (dto) => {
+    vi.spyOn(assistant, 'prepare').mockImplementation(async (dto, viewer) => {
       prepareStarted();
       await new Promise((resolve) => setTimeout(resolve, 120));
-      const prepared = await originalPrepare(dto);
+      const prepared = await originalPrepare(dto, viewer);
       prepareFinished = true;
       return prepared;
     });
@@ -101,7 +104,7 @@ describe('流式：取数阶段客户端断开 (e2e)', () => {
     const controller = new AbortController();
     const pending = fetch(`${baseUrl}/assistant/askStream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         code: 'BX-2026-0003',
         question: '这张单子为什么被驳回了？',

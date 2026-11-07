@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from './modules/auth/authenticated.decorator.js';
 import { PrismaService } from './prisma/prisma.service.js';
 
 /**
@@ -27,7 +28,7 @@ export class AppController {
    * 探活。
    *
    * 原来这里是脚手架自带的 `GET /` 返回 Hello World，现在让给了静态的演示页
-   * （`public/index.html`，由 app-setup.ts 里的 useStaticAssets 提供）——
+   * （`web/src` 构建出的 `public/`，由 app-setup.ts 里的 useStaticAssets 提供）——
    * 静态中间件跑在 Nest 路由之前，`/` 会被它先接走，留着那个 handler 只会
    * 变成一段永远不执行的代码。
    *
@@ -51,7 +52,11 @@ export class AppController {
    * 和人多人少无关。而这类调用有个共同特征：一旦被 429，平台读到的是
    * 「不健康」，于是重启容器，重启后继续 429，直接进死循环。
    * 更要紧的是它不碰模型、不花钱，限流本来就没有防的东西。
+   *
+   * `@Public()`：探针没有账号，也不该为了探活去申请一个。整个服务只有三个
+   * 公开端点 —— 登录、探活、退出，其余默认都要登录（见 session.guard.ts）。
    */
+  @Public()
   @SkipThrottle()
   @Get('health')
   async health(): Promise<{ status: 'ok'; db: 'ok' }> {

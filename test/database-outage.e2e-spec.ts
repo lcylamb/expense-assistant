@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { applyGlobalSetup } from '../src/app-setup.js';
 import { Prisma } from '../src/generated/prisma/client.js';
+import { AuthService } from '../src/modules/auth/auth.service.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import {
   LLM_PROVIDER,
@@ -102,6 +103,19 @@ async function boot(
   })
     .overrideProvider(LLM_PROVIDER)
     .useValue(new ToolCallingProvider())
+    // 库都连不上了，登录也无从谈起 —— 所以这一组用例把「会话解析」也换成桩：
+    // 它们要测的是故障链（503 / error 帧），不是认证。身份给一个审计视角，
+    // 免得「可见性」在故障之外又插一脚进来。
+    .overrideProvider(AuthService)
+    .useValue({
+      resolve: async () => ({
+        id: 'u-zhengshi',
+        username: 'zhengshi',
+        name: '郑十',
+        role: 'auditor',
+        department: '内审部',
+      }),
+    })
     .overrideProvider(PrismaService)
     .useValue(outagePrisma(where))
     .compile();
@@ -127,7 +141,7 @@ describe('取单号时库连不上 (e2e)', () => {
 
   it('非流式 → 503，不是 500', async () => {
     const response = await request(app.getHttpServer())
-      .post('/assistant/ask')
+      .post('/assistant/ask').set('Cookie', 'ea_session=stub')
       .send(body)
       .expect(503);
 
@@ -139,7 +153,7 @@ describe('取单号时库连不上 (e2e)', () => {
     // 仍然有能力返回一个**正常的 HTTP 错误** —— 而不是已经 200 了再塞一帧 error。
     // 这个顺序是刻意排的：能在写头之前发现的问题，就不该用流的语义去表达。
     const response = await request(app.getHttpServer())
-      .post('/assistant/askStream')
+      .post('/assistant/askStream').set('Cookie', 'ea_session=stub')
       .send(body)
       .expect(503);
 
@@ -171,7 +185,7 @@ describe('工具查询时库连不上 (e2e)', () => {
 
   it('非流式 → 503，而不是 200 +「信息不足」', async () => {
     const response = await request(app.getHttpServer())
-      .post('/assistant/ask')
+      .post('/assistant/ask').set('Cookie', 'ea_session=stub')
       .send(body)
       .expect(503);
 
@@ -186,7 +200,7 @@ describe('工具查询时库连不上 (e2e)', () => {
     // 所以唯一能表达失败的通道是流里的 error 帧。直接抛的后果是连接断在半路，
     // 页面上的字永远停在「生成中」。
     const response = await request(app.getHttpServer())
-      .post('/assistant/askStream')
+      .post('/assistant/askStream').set('Cookie', 'ea_session=stub')
       .send(body)
       .expect(200);
 
