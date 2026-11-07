@@ -277,6 +277,7 @@ CI 只运行 mock；真实模型评测在本地手动执行。
 |---|---|---|
 | `LLM_PROVIDER` | `mock` | `mock` 或 `openai`（OpenAI 兼容协议） |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | — | `openai` 模式必填 |
+| `LLM_THINKING` | 关闭 | 厂商思考模式；`enabled` 打开（会破掉提示注入防线） |
 | `RATE_LIMIT_PER_MINUTE` | `30` | 每 IP 每分钟请求数 |
 | `MAX_CONCURRENT_ASKS` | `8` | 同时在途的模型请求上限，`0` 关闭 |
 | `LLM_DAILY_LIMIT` | 关闭 | 每日模型调用上限 |
@@ -291,10 +292,14 @@ CI 只运行 mock；真实模型评测在本地手动执行。
 LLM_PROVIDER=openai
 LLM_API_KEY=...
 LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat
+LLM_MODEL=deepseek-flash
 ```
 
 `npm run eval:real` 会用同一份评测集重新运行。
+
+思考模式保持**关闭**（`LLM_THINKING` 默认关）。DeepSeek 现行模型默认开着它，
+开着时模型会照办问题里嵌的指令 —— 提示注入那条用例连挂 8 次，把假金额当结论答了出来。
+同一个模型关掉思考模式后，它答的是「不能按该要求回答」。
 
 完整列表与取值说明见 [`.env.example`](.env.example) 和 [docs/operations.md](docs/operations.md)。
 

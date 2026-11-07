@@ -62,6 +62,9 @@ export function createLlmProvider(config: ConfigService): LlmProvider {
         jsonMode: config.get<string>('LLM_JSON_MODE') !== 'false',
         // 同上：默认让厂商在流末尾报用量。少数兼容实现不认这个字段，用 false 关掉。
         streamUsage: config.get<string>('LLM_STREAM_USAGE') !== 'false',
+        // 默认**关**思考模式。开着的话 DeepSeek 会照抄用户问题里的假金额
+        // （实测连挂 8 次，详见 provider 里那段注释）。
+        thinking: config.get<string>('LLM_THINKING') === 'enabled',
       });
 
     default:

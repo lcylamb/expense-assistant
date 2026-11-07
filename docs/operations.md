@@ -95,7 +95,8 @@ CI 只运行 mock。真实模型评测在本地手动执行：其输出随模型
 | `LLM_PROVIDER` | `mock` | `mock`（规则表）或 `openai`（OpenAI 兼容协议） |
 | `LLM_API_KEY` | — | `openai` 模式必填 |
 | `LLM_BASE_URL` | — | `openai` 模式必填，例如 `https://api.deepseek.com/v1` |
-| `LLM_MODEL` | — | `openai` 模式必填 |
+| `LLM_MODEL` | — | `openai` 模式必填，例如 `deepseek-flash` |
+| `LLM_THINKING` | 关闭 | 厂商思考模式；`enabled` 打开（会破掉提示注入防线，实测连挂 8 次） |
 | `LLM_TIMEOUT_MS` | `30000` | 单轮调用上限；流式下约束首字等待与帧间沉默 |
 | `LLM_MAX_TOKENS` | `1024` | 输出上限 |
 | `LLM_MAX_ATTEMPTS` | `3` | 含第一次的重试次数，`1` 表示关闭 |
