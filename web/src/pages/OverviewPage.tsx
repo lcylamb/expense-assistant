@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { Expense, ExpenseCategory } from '../api/types';
 import { AskDrawer } from '../chat/AskDrawer';
+import { AskIntro } from '../components/AskIntro';
 import { useExpenses } from '../data/ExpensesContext';
 import { CATEGORY_TEXT, STATUS_COLOR, STATUS_TEXT } from '../lib/constants';
 import { day, money } from '../lib/format';
@@ -110,6 +111,9 @@ export function OverviewPage() {
         <StatCard label="已驳回" value={summary?.rejectedCount ?? 0} suffix="张" />
         <StatCard label="金额合计" value={money(summary?.totalAmount ?? '0.00')} />
       </Row>
+
+      {/* 只在第一次进来时出现，之后靠 localStorage 不再打扰。 */}
+      <AskIntro firstCode={expenses[0]?.code} onTry={openAsk} />
 
       <div className="filter-bar">
         <Typography.Text type="secondary">类型</Typography.Text>

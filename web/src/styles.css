@@ -119,6 +119,61 @@ body {
   margin-bottom: 12px;
 }
 
+/* 首屏引导：把「问一问」在哪指出来，看过一次就不再出现。 */
+.ask-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--ant-color-primary-bg, #e8eefb);
+  border: 1px solid var(--ant-color-primary-border, #b6cdfb);
+  border-radius: 10px;
+}
+
+.ask-intro-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--ant-color-bg-container, #fff);
+  color: var(--ant-color-primary, #2f6fed);
+}
+
+.ask-intro-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ask-intro-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ask-intro-close {
+  flex: none;
+  color: var(--ant-color-text-tertiary, #8a919c);
+}
+
+.ask-intro-text {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ask-intro-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .page-alert {
   margin-bottom: 12px;
 }

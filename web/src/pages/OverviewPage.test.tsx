@@ -1,12 +1,19 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockFetch, renderApp } from '../test-utils';
 import type { ExpensesResponse, Me } from '../api/types';
 
+beforeEach(() => {
+  // 首屏引导记在 localStorage 里，用例之间必须互不影响，
+  // 否则跑过一个用例之后，后面的都看不到引导。
+  localStorage.clear();
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 const me: Me = { username: 'zhangsan', name: '张三', role: 'applicant', department: '销售部' };
@@ -150,5 +157,37 @@ describe('概览页', () => {
     renderApp({ route: '/overview' });
 
     expect(await screen.findByText(/数据库暂时不可用/)).toBeInTheDocument();
+  });
+});
+
+describe('首屏引导', () => {
+  it('第一次进来指出「问一问」，点「知道了」之后不再出现', async () => {
+    stubSession();
+    const user = userEvent.setup();
+    const { unmount } = renderApp({ route: '/overview' });
+
+    expect(await screen.findByText('这些单据可以直接问')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '知道了' }));
+    await waitFor(() => expect(screen.queryByText('这些单据可以直接问')).not.toBeInTheDocument());
+
+    // 关掉页面重新进：不该再看一遍。
+    unmount();
+    renderApp({ route: '/overview' });
+    await screen.findByText('上海出差');
+    expect(screen.queryByText('这些单据可以直接问')).not.toBeInTheDocument();
+  });
+
+  it('点引导里的按钮，直接拿第一张单开抽屉', async () => {
+    stubSession();
+    const user = userEvent.setup();
+    renderApp({ route: '/overview' });
+
+    await user.click(await screen.findByRole('button', { name: /拿 BX-2026-0001 试一下/ }));
+
+    expect(await screen.findByPlaceholderText(/问一句/)).toBeInTheDocument();
+    // 开的是引导里点的那张，不是碰巧第一张在库里的别的单。
+    const drawer = screen.getByRole('dialog');
+    expect(within(drawer).getByText(/BX-2026-0001/)).toBeInTheDocument();
   });
 });
