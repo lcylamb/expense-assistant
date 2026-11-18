@@ -161,14 +161,15 @@ describe('概览页', () => {
 });
 
 describe('首屏引导', () => {
-  it('第一次进来指出「问一问」，点「知道了」之后不再出现', async () => {
+  it('第一次进来指出「问一问」，关掉之后不再出现', async () => {
     stubSession();
     const user = userEvent.setup();
     const { unmount } = renderApp({ route: '/overview' });
 
     expect(await screen.findByText('这些单据可以直接问')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '知道了' }));
+    // 右上角那个叉是图标按钮，没有文字，靠 aria-label 定位。
+    await user.click(screen.getByRole('button', { name: '关闭引导' }));
     await waitFor(() => expect(screen.queryByText('这些单据可以直接问')).not.toBeInTheDocument());
 
     // 关掉页面重新进：不该再看一遍。
